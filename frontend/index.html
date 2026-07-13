@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Misafir Wi-Fi | Hotspot Girişi</title>
+<style>
+  :root {
+    --bg1: #0f172a; --bg2: #1e3a5f;
+    --card: #ffffff; --ink: #0f172a; --muted: #64748b;
+    --accent: #2563eb; --accent-dark: #1d4ed8;
+    --ok: #16a34a; --err: #dc2626; --border: #e2e8f0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--bg1) 0%, var(--bg2) 100%);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .card {
+    background: var(--card); width: 100%; max-width: 440px;
+    border-radius: 20px; padding: 36px 32px;
+    box-shadow: 0 25px 60px rgba(0,0,0,.45);
+  }
+  .logo { text-align: center; margin-bottom: 8px; font-size: 2.4rem; }
+  h1 { text-align: center; font-size: 1.35rem; color: var(--ink); margin-bottom: 4px; }
+  .sub { text-align: center; color: var(--muted); font-size: .85rem; margin-bottom: 24px; }
+  .tabs { display: flex; background: #f1f5f9; border-radius: 12px; padding: 4px; margin-bottom: 22px; }
+  .tab {
+    flex: 1; padding: 10px 0; border: none; background: transparent; border-radius: 9px;
+    font-size: .9rem; font-weight: 600; color: var(--muted); cursor: pointer; transition: all .2s;
+  }
+  .tab.active { background: #fff; color: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+  label { display: block; font-size: .8rem; font-weight: 600; color: var(--ink); margin: 14px 0 6px; }
+  input[type=text], input[type=tel], input[type=number] {
+    width: 100%; padding: 12px 14px; border: 1.5px solid var(--border); border-radius: 10px;
+    font-size: .95rem; outline: none; transition: border-color .2s;
+  }
+  input:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .kvkk {
+    display: flex; gap: 10px; align-items: flex-start; margin: 18px 0 6px;
+    background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  }
+  .kvkk input { margin-top: 3px; accent-color: var(--accent); width: 16px; height: 16px; flex-shrink: 0; }
+  .kvkk span { font-size: .76rem; color: var(--muted); line-height: 1.45; }
+  .btn {
+    width: 100%; margin-top: 18px; padding: 13px; border: none; border-radius: 12px;
+    background: var(--accent); color: #fff; font-size: 1rem; font-weight: 700; cursor: pointer;
+    transition: background .2s;
+  }
+  .btn:hover { background: var(--accent-dark); }
+  .btn:disabled { background: #94a3b8; cursor: not-allowed; }
+  .msg { margin-top: 14px; padding: 11px 14px; border-radius: 10px; font-size: .85rem; display: none; }
+  .msg.err { display: block; background: #fef2f2; color: var(--err); border: 1px solid #fecaca; }
+  .msg.ok  { display: block; background: #f0fdf4; color: var(--ok);  border: 1px solid #bbf7d0; }
+  .msg.info{ display: block; background: #eff6ff; color: var(--accent); border: 1px solid #bfdbfe; }
+  .hint { margin-top: 16px; font-size: .72rem; color: var(--muted); text-align: center; line-height: 1.5; }
+  .footer { margin-top: 20px; text-align: center; font-size: .7rem; color: var(--muted); }
+  #smsStep2 { display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">&#128246;</div>
+  <h1>Misafir Wi-Fi Ağına Hoş Geldiniz</h1>
+  <p class="sub">İnternete erişmek için 5651 Sayılı Kanun gereği kimliğinizi doğrulamanız gerekmektedir.</p>
+
+  <div class="tabs">
+    <button class="tab active" id="tabTc" onclick="switchTab('tc')">TC Kimlik ile Giriş</button>
+    <button class="tab" id="tabSms" onclick="switchTab('sms')">SMS ile Giriş</button>
+  </div>
+
+  <!-- ==================== TC KİMLİK FORMU ==================== -->
+  <form id="tcForm">
+    <div class="row">
+      <div>
+        <label for="firstName">Ad</label>
+        <input type="text" id="firstName" required placeholder="Adınız">
+      </div>
+      <div>
+        <label for="lastName">Soyad</label>
+        <input type="text" id="lastName" required placeholder="Soyadınız">
+      </div>
+    </div>
+    <label for="birthYear">Doğum Yılı</label>
+    <input type="number" id="birthYear" required min="1900" max="2026" placeholder="Örn: 1995">
+    <label for="tcNo">TC Kimlik No</label>
+    <input type="text" id="tcNo" required maxlength="11" pattern="[0-9]{11}" placeholder="11 haneli TC Kimlik No">
+
+    <div class="kvkk">
+      <input type="checkbox" id="kvkkTc" required>
+      <span><strong>KVKK Açık Rıza Metni:</strong> 6698 sayılı KVKK ve 5651 sayılı Kanun kapsamında kimlik
+      bilgilerimin, IP/MAC adresimin ve bağlantı kayıtlarımın yasal saklama süresi boyunca işlenmesine
+      ve loglanmasına açık rıza gösteriyorum.</span>
+    </div>
+    <button type="submit" class="btn" id="tcBtn">Doğrula ve Bağlan</button>
+    <div class="msg" id="tcMsg"></div>
+  </form>
+
+  <!-- ==================== SMS FORMU ==================== -->
+  <form id="smsForm" style="display:none">
+    <div id="smsStep1">
+      <label for="phone">Cep Telefonu</label>
+      <input type="tel" id="phone" required placeholder="5XX XXX XX XX">
+      <div class="kvkk">
+        <input type="checkbox" id="kvkkSms" required>
+        <span><strong>KVKK Açık Rıza Metni:</strong> 6698 sayılı KVKK ve 5651 sayılı Kanun kapsamında telefon
+        numaramın, IP/MAC adresimin ve bağlantı kayıtlarımın yasal saklama süresi boyunca işlenmesine
+        ve loglanmasına açık rıza gösteriyorum.</span>
+      </div>
+      <button type="submit" class="btn" id="smsReqBtn">Doğrulama Kodu Gönder</button>
+    </div>
+    <div id="smsStep2">
+      <label for="otpCode">SMS Doğrulama Kodu</label>
+      <input type="text" id="otpCode" maxlength="6" pattern="[0-9]{6}" placeholder="6 haneli kod">
+      <button type="button" class="btn" id="smsVerifyBtn" onclick="verifyOtp()">Kodu Doğrula ve Bağlan</button>
+    </div>
+    <div class="msg" id="smsMsg"></div>
+  </form>
+
+  <p class="hint">Demo için geçerli TC Kimlik No örneği: <strong>10000000146</strong><br>
+  SMS kodu gerçek operatör yerine ekranda ve sunucu loglarında gösterilir.</p>
+  <p class="footer">Bu sistem 5651 Sayılı Kanun kapsamında tüm bağlantı kayıtlarını dijital imzalı olarak saklar.</p>
+</div>
+
+<script>
+function switchTab(which) {
+  document.getElementById('tabTc').classList.toggle('active', which === 'tc');
+  document.getElementById('tabSms').classList.toggle('active', which === 'sms');
+  document.getElementById('tcForm').style.display = which === 'tc' ? 'block' : 'none';
+  document.getElementById('smsForm').style.display = which === 'sms' ? 'block' : 'none';
+}
+
+function showMsg(id, text, cls) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + cls;
+}
+
+async function postJson(url, payload) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = typeof data.detail === 'string' ? data.detail : 'İşlem başarısız oldu.';
+    throw new Error(detail);
+  }
+  return data;
+}
+
+/* ---------------- TC Kimlik girişi ---------------- */
+document.getElementById('tcForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!document.getElementById('kvkkTc').checked) {
+    showMsg('tcMsg', 'Devam etmek için KVKK açık rıza onayı zorunludur.', 'err');
+    return;
+  }
+  const btn = document.getElementById('tcBtn');
+  btn.disabled = true;
+  showMsg('tcMsg', 'MERNİS üzerinden kimlik doğrulanıyor...', 'info');
+  try {
+    await postJson('/api/v1/auth/tc', {
+      first_name: document.getElementById('firstName').value,
+      last_name: document.getElementById('lastName').value,
+      birth_year: parseInt(document.getElementById('birthYear').value, 10),
+      tc_no: document.getElementById('tcNo').value.trim(),
+      kvkk_approved: true,
+    });
+    showMsg('tcMsg', 'Doğrulama başarılı! Yönlendiriliyorsunuz...', 'ok');
+    setTimeout(() => { window.location.href = '/portal/status.html'; }, 800);
+  } catch (err) {
+    showMsg('tcMsg', err.message, 'err');
+    btn.disabled = false;
+  }
+});
+
+/* ---------------- SMS OTP girişi ---------------- */
+document.getElementById('smsForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!document.getElementById('kvkkSms').checked) {
+    showMsg('smsMsg', 'Devam etmek için KVKK açık rıza onayı zorunludur.', 'err');
+    return;
+  }
+  const btn = document.getElementById('smsReqBtn');
+  btn.disabled = true;
+  showMsg('smsMsg', 'SMS gönderiliyor...', 'info');
+  try {
+    const data = await postJson('/api/v1/auth/sms/request', {
+      phone: document.getElementById('phone').value,
+      kvkk_approved: true,
+    });
+    document.getElementById('smsStep2').style.display = 'block';
+    showMsg('smsMsg', data.message + ' — [DEMO] Kodunuz: ' + data.demo_otp, 'ok');
+  } catch (err) {
+    showMsg('smsMsg', err.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function verifyOtp() {
+  const btn = document.getElementById('smsVerifyBtn');
+  btn.disabled = true;
+  showMsg('smsMsg', 'Kod doğrulanıyor...', 'info');
+  try {
+    await postJson('/api/v1/auth/sms/verify', {
+      phone: document.getElementById('phone').value,
+      code: document.getElementById('otpCode').value.trim(),
+    });
+    showMsg('smsMsg', 'Doğrulama başarılı! Yönlendiriliyorsunuz...', 'ok');
+    setTimeout(() => { window.location.href = '/portal/status.html'; }, 800);
+  } catch (err) {
+    showMsg('smsMsg', err.message, 'err');
+    btn.disabled = false;
+  }
+}
+
+/* Zaten aktif oturum varsa doğrudan durum sayfasına geç */
+fetch('/api/v1/auth/check').then(r => {
+  if (r.ok) window.location.href = '/portal/status.html';
+}).catch(() => {});
+</script>
+</body>
+</html>

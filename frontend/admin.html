@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Site Ziyaretleri | Yönetici Paneli</title>
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --ink: #e2e8f0; --muted: #94a3b8;
+    --accent: #60a5fa; --ok: #4ade80; --err: #f87171; --border: #334155;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--bg); color: var(--ink); padding: 24px; min-height: 100vh;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: .85rem; margin-bottom: 20px; }
+  .toolbar {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 20px;
+  }
+  input, select {
+    background: #0f172a; border: 1px solid var(--border); color: var(--ink);
+    padding: 8px 10px; border-radius: 8px; font-size: .85rem;
+  }
+  label { font-size: .78rem; color: var(--muted); display: block; margin-bottom: 4px; }
+  button {
+    background: var(--accent); color: #0f172a; border: none; border-radius: 8px;
+    padding: 9px 16px; font-weight: 700; cursor: pointer; font-size: .85rem;
+  }
+  button:hover { opacity: .9; }
+  #status { font-size: .78rem; color: var(--muted); margin-left: auto; }
+  #status.err { color: var(--err); }
+  #status.ok { color: var(--ok); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; overflow-x: auto;
+  }
+  .panel h2 { font-size: 1rem; margin-bottom: 12px; color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: .7rem; }
+  .user-block { margin-bottom: 14px; }
+  .user-block h3 {
+    font-size: .85rem; color: var(--ok); font-family: Consolas, monospace;
+    margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  }
+  .empty { color: var(--muted); font-size: .85rem; padding: 12px 0; }
+</style>
+</head>
+<body>
+<h1>&#128269; Site Ziyaretleri — Yönetici Paneli</h1>
+<p class="sub">DNS sorgularından türetilir; hangi kullanıcının hangi domain'e gittiğini gösterir (HTTPS içeriği değil, sadece domain).</p>
+
+<div class="toolbar">
+  <div>
+    <label>Yönetici Anahtarı (X-Admin-Key)</label>
+    <input type="password" id="adminKey" placeholder="ADMIN_API_KEY">
+  </div>
+  <div>
+    <label>Kullanıcıya göre filtrele (opsiyonel)</label>
+    <input type="text" id="filterUser" placeholder="TC no / telefon">
+  </div>
+  <button onclick="loadAll()">Yenile</button>
+  <label style="display:flex;align-items:center;gap:6px;margin-top:16px;">
+    <input type="checkbox" id="autoRefresh" style="width:auto;"> Otomatik yenile (5 sn)
+  </label>
+  <span id="status"></span>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Kullanıcı Bazında Özet</h2>
+    <div id="summaryBox" class="empty">Yükleniyor...</div>
+  </div>
+  <div class="panel">
+    <h2>Son Ziyaretler (ham)</h2>
+    <table>
+      <thead><tr><th>Zaman</th><th>Kullanıcı</th><th>IP</th><th>Domain</th><th>Tip</th></tr></thead>
+      <tbody id="rawBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let timer = null;
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = cls || '';
+}
+
+function getKey() {
+  const key = document.getElementById('adminKey').value;
+  if (key) localStorage.setItem('hotspot_admin_key', key);
+  return key;
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url, { headers: { 'X-Admin-Key': getKey() } });
+  if (res.status === 403) throw new Error('Yönetici anahtarı hatalı.');
+  if (!res.ok) throw new Error('İstek başarısız (' + res.status + ')');
+  return res.json();
+}
+
+function renderSummary(data) {
+  const box = document.getElementById('summaryBox');
+  const usernames = Object.keys(data);
+  if (usernames.length === 0) {
+    box.innerHTML = '<div class="empty">Henüz kayıtlı site ziyareti yok.</div>';
+    return;
+  }
+  box.innerHTML = usernames.map(u => `
+    <div class="user-block">
+      <h3>${u}</h3>
+      <table>
+        <thead><tr><th>Domain</th><th>Sayı</th><th>Son Ziyaret</th></tr></thead>
+        <tbody>
+          ${data[u].map(row => `
+            <tr>
+              <td>${row.domain}</td>
+              <td>${row.visit_count}</td>
+              <td>${new Date(row.last_visit).toLocaleString('tr-TR')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`).join('');
+}
+
+function renderRaw(rows) {
+  const body = document.getElementById('rawBody');
+  if (rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">Kayıt yok.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(r => `
+    <tr>
+      <td>${new Date(r.timestamp).toLocaleString('tr-TR')}</td>
+      <td>${r.username}</td>
+      <td>${r.ip}</td>
+      <td>${r.domain}</td>
+      <td>${r.query_type}</td>
+    </tr>`).join('');
+}
+
+async function loadAll() {
+  const filterUser = document.getElementById('filterUser').value.trim();
+  try {
+    const summary = await fetchJson('/api/v1/sitevisits/summary');
+    const rawUrl = '/api/v1/sitevisits?limit=100' + (filterUser ? '&username=' + encodeURIComponent(filterUser) : '');
+    const raw = await fetchJson(rawUrl);
+    renderSummary(summary);
+    renderRaw(raw);
+    setStatus('Son güncelleme: ' + new Date().toLocaleTimeString('tr-TR'), 'ok');
+  } catch (e) {
+    setStatus(e.message, 'err');
+  }
+}
+
+document.getElementById('autoRefresh').addEventListener('change', (e) => {
+  if (e.target.checked) {
+    timer = setInterval(loadAll, 5000);
+  } else if (timer) {
+    clearInterval(timer);
+  }
+});
+
+window.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('hotspot_admin_key');
+  if (saved) document.getElementById('adminKey').value = saved;
+  loadAll();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hotspot-postgres
+    environment:
+      POSTGRES_USER: hotspot
+      POSTGRES_PASSWORD: hotspot_secret
+      POSTGRES_DB: hotspot_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hotspot -d hotspot_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: hotspot-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: hotspot-backend
+    environment:
+      DATABASE_URL: postgresql://hotspot:hotspot_secret@postgres:5432/hotspot_db
+      REDIS_URL: redis://redis:6379/0
+      LOG_DIR: /app/logs
+      SESSION_TTL_SECONDS: "7200"
+      OTP_TTL_SECONDS: "180"
+      DNSMASQ_LOG_FILE: /app/logs/dnsmasq_query.log
+      ADMIN_API_KEY: "changeme-admin-key"
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: hotspot-gateway
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

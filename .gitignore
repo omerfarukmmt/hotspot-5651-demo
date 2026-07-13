@@ -1,0 +1,15 @@
+# Çalışma zamanında üretilen dosyalar
+__pycache__/
+*.pyc
+logs/*.log
+logs/*.log.signed
+logs/signing_key.pem
+!logs/.gitkeep
+
+# Docker / IDE / OS
+.env
+*.cookie
+cookies.txt
+.vscode/
+.idea/
+Thumbs.db

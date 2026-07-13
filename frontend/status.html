@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bağlantı Durumu | Misafir Wi-Fi</title>
+<style>
+  :root {
+    --bg1: #0f172a; --bg2: #14532d;
+    --card: #ffffff; --ink: #0f172a; --muted: #64748b;
+    --accent: #2563eb; --ok: #16a34a; --err: #dc2626; --border: #e2e8f0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--bg1) 0%, var(--bg2) 100%);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .card {
+    background: var(--card); width: 100%; max-width: 460px;
+    border-radius: 20px; padding: 36px 32px; text-align: center;
+    box-shadow: 0 25px 60px rgba(0,0,0,.45);
+  }
+  .check {
+    width: 72px; height: 72px; border-radius: 50%; background: #f0fdf4;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 16px; font-size: 2.2rem; border: 2px solid #bbf7d0;
+  }
+  h1 { font-size: 1.3rem; color: var(--ink); margin-bottom: 6px; }
+  .sub { color: var(--muted); font-size: .85rem; margin-bottom: 26px; }
+  .timer-label { font-size: .78rem; font-weight: 700; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+  .timer {
+    font-size: 3rem; font-weight: 800; color: var(--accent);
+    font-variant-numeric: tabular-nums; margin: 6px 0 22px;
+  }
+  .timer.warning { color: var(--err); }
+  .details {
+    background: #f8fafc; border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 18px; text-align: left; font-size: .84rem; margin-bottom: 22px;
+  }
+  .details div { display: flex; justify-content: space-between; padding: 5px 0; }
+  .details span:first-child { color: var(--muted); }
+  .details span:last-child { font-weight: 600; color: var(--ink); font-family: Consolas, monospace; }
+  .btn {
+    display: inline-block; width: 100%; padding: 13px; border: none; border-radius: 12px;
+    font-size: .95rem; font-weight: 700; cursor: pointer; text-decoration: none;
+    margin-top: 8px; transition: opacity .2s;
+  }
+  .btn:hover { opacity: .9; }
+  .btn.go { background: var(--accent); color: #fff; }
+  .btn.out { background: #fef2f2; color: var(--err); border: 1.5px solid #fecaca; }
+  .footer { margin-top: 18px; font-size: .7rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="check">&#9989;</div>
+  <h1>İnternete başarıyla bağlandınız!</h1>
+  <p class="sub">Oturumunuz 5651 Sayılı Kanun kapsamında kayıt altına alınmıştır.</p>
+
+  <div class="timer-label">Kalan Oturum Süreniz</div>
+  <div class="timer" id="timer">--:--:--</div>
+
+  <div class="details">
+    <div><span>Kullanıcı</span><span id="dUser">-</span></div>
+    <div><span>IP Adresi</span><span id="dIp">-</span></div>
+    <div><span>MAC Adresi</span><span id="dMac">-</span></div>
+    <div><span>Giriş Zamanı</span><span id="dLogin">-</span></div>
+  </div>
+
+  <a class="btn go" href="/">&#127760; İnternette Gezinmeye Başla</a>
+  <button class="btn out" onclick="logout()">Oturumu Sonlandır</button>
+
+  <p class="footer">Süre dolduğunda oturumunuz otomatik olarak sonlandırılır ve yeniden giriş yapmanız gerekir.</p>
+</div>
+
+<script>
+let remaining = 0;
+let ticker = null;
+
+function fmt(total) {
+  const h = String(Math.floor(total / 3600)).padStart(2, '0');
+  const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+  const s = String(total % 60).padStart(2, '0');
+  return h + ':' + m + ':' + s;
+}
+
+function tick() {
+  const el = document.getElementById('timer');
+  el.textContent = fmt(remaining);
+  el.classList.toggle('warning', remaining <= 300);
+  if (remaining <= 0) {
+    clearInterval(ticker);
+    alert('Oturum süreniz doldu. Lütfen tekrar giriş yapın.');
+    window.location.href = '/portal/index.html';
+    return;
+  }
+  remaining--;
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetch('/api/v1/session/status');
+    if (!res.ok) { window.location.href = '/portal/index.html'; return; }
+    const data = await res.json();
+    remaining = data.remaining_seconds;
+    document.getElementById('dUser').textContent = data.username;
+    document.getElementById('dIp').textContent = data.ip;
+    document.getElementById('dMac').textContent = data.mac;
+    document.getElementById('dLogin').textContent = new Date(data.login_time).toLocaleString('tr-TR');
+    if (ticker) clearInterval(ticker);
+    tick();
+    ticker = setInterval(tick, 1000);
+  } catch (e) {
+    window.location.href = '/portal/index.html';
+  }
+}
+
+async function logout() {
+  await fetch('/api/v1/logout', { method: 'POST' }).catch(() => {});
+  window.location.href = '/portal/index.html';
+}
+
+loadStatus();
+/* Sunucu ile 30 sn'de bir yeniden senkronize et (TTL gerçeğe sadık kalsın) */
+setInterval(loadStatus, 30000);
+</script>
+</body>
+</html>
