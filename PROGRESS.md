@@ -20,7 +20,7 @@ Redis + Nginx, Docker Compose ile ayakta (bkz. `README.md`).
   (`logs/dhcp_activity.log`, `.signed`).
 - Nginx `auth_request` ile "internet" simülasyonu (gerçek WAN çıkışı yok).
 
-### 2. Gerçek hotspot'a dönüştürme planı (henüz KODLANMADI, sadece karar verildi)
+### 2. Gerçek hotspot'a dönüştürme planı (config + backend entegrasyonu KODLANDI, donanımda TEST EDİLMEDİ)
 Amaç: sahte "internet simülasyonu"nu gerçek, internete çıkan bir ağa çevirmek.
 
 Kararlaştırılan mimari:
@@ -35,16 +35,36 @@ Kararlaştırılan mimari:
 - Elimizdeki eski/zayıf router bu plana **dahil edilmedi** (sinyal sorunu
   demo riski yaratır).
 
+**KODLANDI (bu oturumda), henüz gerçek donanımda TEST EDİLMEDİ:**
+- [x] hostapd/dnsmasq/nftables konfigürasyonlarının yazılması
+      (`network/hostapd.conf.example`, `network/dnsmasq.conf.example`,
+      `network/nftables.conf`, kurulum betiği `network/setup-ap.sh`,
+      ayrıntılı mimari `network/README.md`).
+- [x] FastAPI login/logout/expire akışına gerçek `nft add/delete element`
+      çağrılarının eklenmesi: `backend/nft_manager.py` (`allow_client`/
+      `revoke_client`), `backend/main.py` içinde `_create_session`, `logout`,
+      `_expired_session_reaper`'a bağlandı. `ENABLE_NFTABLES=true` olmadan
+      no-op (Docker demo ortamında `nft` binary'si yok, varsayılan `false`).
+- [x] Gerçek MAC adresinin dnsmasq lease dosyasından okunması:
+      `backend/main.py get_real_mac()`, `DNSMASQ_LEASES_FILE` env değişkeni
+      tanımlı değilse (Docker demo varsayılanı) eskisi gibi `simulate_mac()`'e
+      düşer — demo davranışı bozulmadı.
+- [x] iOS/Android/Windows captive portal auto-detection domain'lerinin
+      (`captive.apple.com`, `connectivitycheck.gstatic.com`,
+      `msftconnecttest.com` vb.) `network/dnsmasq.conf.example`'da AP IP'sine
+      yönlendirilmesi.
+
 **Henüz yapılmadı:**
-- [ ] hostapd/dnsmasq/nftables konfigürasyonlarının yazılması
-- [ ] FastAPI login/logout akışına gerçek `nft add/delete element` çağrılarının
-      eklenmesi (şu an sadece Redis+Postgres'e yazıyor, firewall'a dokunmuyor)
-- [ ] Gerçek MAC adresinin dnsmasq lease dosyası/ARP'tan okunması
-      (şu an `simulate_mac()` ile IP'den türetiliyor — `backend/main.py`)
-- [ ] iOS/Android captive portal auto-detection domain'lerinin (ör.
-      `captive.apple.com`, `connectivitycheck.gstatic.com`) dnsmasq'ta
-      portale yönlendirilmesi
-- [ ] USB Wi-Fi adaptörün temin edilip AP modunun test edilmesi
+- [ ] USB Wi-Fi adaptörün temin edilip AP modunun gerçek donanımda test
+      edilmesi (donanım bağımlılığı — bu, yazılım tarafından bağımsız).
+- [ ] `network/setup-ap.sh` + yukarıdaki config'lerin gerçek bir Linux kutusunda
+      (Raspberry Pi/eski laptop) uçtan uca prova edilmesi — şu ana kadar sadece
+      dosya olarak yazıldı, hiç çalıştırılmadı/test edilmedi.
+- [ ] Backend konteynerinin gerçek kurulumda `nft` komutunu çalıştırabilmesi
+      için `--network host` + `--cap-add=NET_ADMIN` ile ayağa kaldırılması
+      (ya da backend'i konteynersiz, host üzerinde çalıştırma) — henüz
+      `docker-compose.yml`'e bu mod eklenmedi, sadece `network/README.md`'de
+      not olarak var.
 
 ### 3. Kullanıcı bazlı site ziyaret loglama (KODLANDI ve test edildi)
 - `backend/dns_log_watcher.py`: dnsmasq sorgu logunu (`query[TİP] domain from IP`)
@@ -61,6 +81,46 @@ Kararlaştırılan mimari:
   log satırları `logs/dnsmasq_query.log`'a eklendi, doğru kullanıcıya
   eşlendiği, eşleşmeyen IP'nin `"(kimliksiz)"` olarak işaretlendiği, imza
   sign/verify akışının bozulmadığı doğrulandı.
+
+### 4. Rate limiting + OTP kilitleme (KODLANDI, Docker'da test edildi)
+- `backend/main.py`: `_rate_limit()` — Redis `INCR`+`EXPIRE` ile sabit pencereli sayaç.
+  `/api/v1/auth/tc` (IP başına 10/5dk) ve `/api/v1/auth/sms/request` (telefon VE IP
+  başına 3/10dk) uçlarına uygulandı; aşılınca `429` + kalan bekleme süresi döner.
+- `sms_verify`: `otp_fail:{phone}` sayacı ile başarısız kod denemesi izleniyor;
+  `OTP_MAX_ATTEMPTS` (varsayılan 5) aşılınca kod iptal edilip numara
+  `OTP_LOCKOUT_SECONDS` (varsayılan 900sn) `otp_lock:{phone}` ile kilitleniyor,
+  hem `sms/request` hem `sms/verify` bu kilidi kontrol ediyor; AUTHFAIL olarak
+  imzalı loga da yazılıyor. Yeni kod başarıyla istenince sayaç sıfırlanıyor.
+- Tüm eşikler docker-compose.yml'de env değişkeni olarak dışarı açık.
+- **Test edildi:** `/auth/tc`'ye eşiği aşacak kadar istek atıldığında `429` döndüğü,
+  `sms/verify`'a 5 kez yanlış kod girilince numaranın kilitlendiği ve kilitliyken
+  hem `sms/request` hem `sms/verify`'ın reddettiği doğrulandı.
+
+### 5. Log imza zinciri + rotasyon (KODLANDI, Docker'da test edildi)
+- `backend/log_manager.py`: `rotate_and_seal_log()` — aktif `dhcp_activity.log`'u
+  imzalayıp `logs/archive/dhcp_activity-<timestamp>.log` olarak arşivler, imza
+  kaydını `logs/dhcp_activity.chain.jsonl`e append-only ekler. Her kayıt bir
+  önceki kaydın `link_hash`'ini içerir (hash zinciri) — geçmiş bir dönem
+  silinir/değiştirilirse zincir o noktadan sonrası için geçersiz çıkar.
+  `verify_chain()` tüm zinciri baştan sona doğrular (chain_intact +
+  signature_valid + archive_file_matches, her kayıt için ayrı ayrı).
+- Eskisi (`sign_log_file`/`verify_log_file`, sadece o anki aktif dosyayı
+  imzalar/doğrular, `.signed` her seferinde üzerine yazılır) **korundu**,
+  ad-hoc/canlı-demo amaçlı hâlâ kullanılabilir; rotasyon bunun üstüne ek katman.
+- Arka plan görevi `_daily_log_signer` → `_daily_log_rotator` olarak değiştirildi,
+  `LOG_ROTATE_INTERVAL_SECONDS` (varsayılan 86400sn) periyoduyla otomatik rotasyon
+  yapıyor. Manuel tetik: `POST /api/v1/log/rotate` (admin yetkisi ister, dosya
+  taşıdığı için). Zincir görüntüleme: `GET /api/v1/log/chain` (admin).
+- Bilinen sınır (README'de not edildi): hash zinciri tek başına, özel anahtara
+  ihtiyaç duymadan yeniden hesaplanabilir bir yapı; asıl bütünlük garantisi her
+  kaydın RSA imzasından geliyor. Zincirin tamamının bağımsız doğrulanması için
+  gerçek sistemde harici bir zaman damgası otoritesine (TSA) periyodik bildirim
+  gerekir — bu demo kapsamının dışında bırakıldı.
+- **Test edildi:** birkaç log satırı yazıldıktan sonra `/api/v1/log/rotate` çağrıldı,
+  `archive/`e dosyanın taşındığı, aktif log dosyasının sıfırlandığı (yeni yazımla
+  otomatik yeniden oluştuğu), `/api/v1/log/chain`'in `valid: true` döndüğü,
+  arşivlenen dosyada tek karakter değiştirilince `archive_file_matches: false`
+  ile bozulmanın doğru tespit edildiği doğrulandı.
 
 ## Demo günü öncesi yapılacaklar (checklist)
 

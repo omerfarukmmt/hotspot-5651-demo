@@ -1,0 +1,42 @@
+# dnsmasq — DHCP + DNS konfigürasyonu (gerçek hotspot kurulumu için)
+#
+# `<AP_IP>` ve `<PROJECT_PATH>` yer tutucularını gerçek değerlerle değiştirip
+# /etc/dnsmasq.conf olarak kullanın (ya da -C ile bu dosyayı doğrudan gösterin).
+
+interface=wlan1
+bind-interfaces
+except-interface=lo
+
+# --- DHCP ---
+dhcp-range=192.168.4.10,192.168.4.250,255.255.255.0,12h
+dhcp-option=option:router,192.168.4.1
+dhcp-option=option:dns-server,192.168.4.1
+# Lease dosyası: backend'in gerçek MAC adresini okuyabilmesi için
+# (bkz. backend/main.py get_real_mac / DNSMASQ_LEASES_FILE env değişkeni).
+dhcp-leasefile=/var/lib/misc/dnsmasq.leases
+
+# --- DNS sorgu loglama (site ziyaret takibi için) ---
+# Bu dosya backend konteynerine ./logs:/app/logs ile bağlı olan dizinin
+# içinde olmalı ki `_dns_log_tailer` (backend/main.py) okuyabilsin.
+log-queries
+log-facility=<PROJECT_PATH>/logs/dnsmasq_query.log
+
+# --- Captive portal auto-detection ---
+# iOS/Android/Windows, ağa bağlanır bağlanmaz bu domain'lere bir istek atar;
+# beklenen "başarılı" cevabı ALMAZLARSA işletim sistemi otomatik olarak
+# "Bu ağa giriş yapın" (Captive Network Assistant) ekranını açar. Bu domain'leri
+# gerçek internete değil, kendi AP IP'mize (nginx gateway) yönlendirerek bu
+# davranışı garanti altına alıyoruz.
+address=/captive.apple.com/192.168.4.1
+address=/connectivitycheck.gstatic.com/192.168.4.1
+address=/connectivitycheck.android.com/192.168.4.1
+address=/clients3.google.com/192.168.4.1
+address=/msftconnecttest.com/192.168.4.1
+address=/www.msftconnecttest.com/192.168.4.1
+address=/msftncsi.com/192.168.4.1
+address=/detectportal.firefox.com/192.168.4.1
+
+# Diğer tüm domain isimleri normal şekilde yukarı akışa (upstream) çözülür;
+# upstream DNS sunucusu telefon hotspot'undan DHCP ile öğrenilir
+# (bu dosyada elle bir "server=" satırı EKLENMEMELİDİR ki upstream otomatik
+# algılansın — bkz. setup-ap.sh).

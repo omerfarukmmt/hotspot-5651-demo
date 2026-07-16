@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session as DbSession
 import dns_log_watcher
 import log_manager
 import models
+import nft_manager
 import schemas
 from database import Base, SessionLocal, engine, get_db, wait_for_db
 
@@ -32,7 +33,22 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 SESSION_TTL = int(os.getenv("SESSION_TTL_SECONDS", "7200"))  # 2 saat
 OTP_TTL = int(os.getenv("OTP_TTL_SECONDS", "180"))  # 3 dakika
 DNSMASQ_LOG_FILE = os.getenv("DNSMASQ_LOG_FILE", "/app/logs/dnsmasq_query.log")
+# Gerçek hotspot kurulumunda dnsmasq'ın lease dosyasına işaret eder (bkz. network/README.md).
+# Docker demo ortamında boş bırakılır; bu durumda MAC her zaman simulate_mac() ile türetilir.
+DNSMASQ_LEASES_FILE = os.getenv("DNSMASQ_LEASES_FILE", "")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "changeme-admin-key")
+
+# Rate limiting / OTP kilitleme (bkz. _rate_limit, sms_verify) — brute-force ve
+# SMS bombalama saldırılarına karşı; Redis sabit-pencere sayaçlarıyla uygulanır.
+RATE_LIMIT_LOGIN_MAX = int(os.getenv("RATE_LIMIT_LOGIN_MAX", "10"))
+RATE_LIMIT_LOGIN_WINDOW = int(os.getenv("RATE_LIMIT_LOGIN_WINDOW_SECONDS", "300"))
+RATE_LIMIT_SMS_REQUEST_MAX = int(os.getenv("RATE_LIMIT_SMS_REQUEST_MAX", "3"))
+RATE_LIMIT_SMS_REQUEST_WINDOW = int(os.getenv("RATE_LIMIT_SMS_REQUEST_WINDOW_SECONDS", "600"))
+OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))
+OTP_LOCKOUT_SECONDS = int(os.getenv("OTP_LOCKOUT_SECONDS", "900"))  # 15 dakika
+
+# Log rotasyon aralığı (bkz. _daily_log_rotator, log_manager.rotate_and_seal_log).
+LOG_ROTATE_INTERVAL_SECONDS = int(os.getenv("LOG_ROTATE_INTERVAL_SECONDS", "86400"))  # 24 saat
 
 rdb = redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -58,6 +74,23 @@ def simulate_mac(ip: str) -> str:
     return "02:" + ":".join(h[i:i + 2] for i in range(0, 10, 2))
 
 
+def get_real_mac(ip: str) -> str:
+    """dnsmasq lease dosyasından gerçek MAC adresini okur (format: `expiry mac ip host client-id`).
+
+    Lease dosyası tanımlı/erişilebilir değilse veya IP eşleşmiyorsa (Docker demo
+    ortamı gibi) `simulate_mac()`'e düşer."""
+    if DNSMASQ_LEASES_FILE:
+        try:
+            with open(DNSMASQ_LEASES_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[2] == ip:
+                        return parts[1].upper()
+        except OSError:
+            pass
+    return simulate_mac(ip)
+
+
 def mock_mernis_verify(tc_no: str, first_name: str, last_name: str, birth_year: int) -> bool:
     """MERNİS KPSPublic servisinin yerel simülasyonu.
 
@@ -81,6 +114,21 @@ def mock_mernis_verify(tc_no: str, first_name: str, last_name: str, birth_year: 
     return True
 
 
+def _rate_limit(key: str, max_count: int, window_seconds: int) -> None:
+    """Redis sabit pencereli sayaç: aynı pencere içinde max_count'u aşan istekleri 429 ile reddeder.
+
+    `INCR` + ilk istekte `EXPIRE`: pencere süresi dolunca sayaç otomatik sıfırlanır."""
+    current = rdb.incr(key)
+    if current == 1:
+        rdb.expire(key, window_seconds)
+    if current > max_count:
+        ttl = rdb.ttl(key)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Çok fazla istek. Lütfen {max(ttl, 1)} saniye sonra tekrar deneyin.",
+        )
+
+
 def normalize_phone(phone: str) -> str:
     digits = "".join(c for c in phone if c.isdigit())
     if len(digits) < 10:
@@ -93,7 +141,7 @@ def _create_session(db: DbSession, request: Request, response: Response, usernam
     PostgreSQL'e kalıcı kayıt atar, 5651 LOGIN logu üretir ve cookie set eder."""
     token = uuid.uuid4().hex
     ip = get_client_ip(request)
-    mac = simulate_mac(ip)
+    mac = get_real_mac(ip)
     now = utcnow()
 
     session_payload = {
@@ -116,6 +164,7 @@ def _create_session(db: DbSession, request: Request, response: Response, usernam
     db.commit()
 
     log_manager.write_log("LOGIN", ip, mac, username, "Kullanici sisteme giris yapti.")
+    nft_manager.allow_client(ip)
 
     response.set_cookie(
         key="session_token",
@@ -181,6 +230,7 @@ async def _expired_session_reaper():
                             "EXPIRE", rec.ip_address, rec.mac_address, rec.username,
                             "Oturum suresi doldu (2 saatlik TTL), internet erisimi kapatildi.",
                         )
+                        nft_manager.revoke_client(rec.ip_address)
                 db.commit()
             finally:
                 db.close()
@@ -188,15 +238,17 @@ async def _expired_session_reaper():
             print(f"[reaper] Hata: {exc}", flush=True)
 
 
-async def _daily_log_signer():
-    """Günde bir kez log dosyasını otomatik imzalar (manuel tetik: POST /api/v1/log/sign)."""
+async def _daily_log_rotator():
+    """Günde bir kez aktif log dosyasını imzalayıp arşive taşır ve zincire ekler
+    (manuel tetik: POST /api/v1/log/rotate). Log dosyasının sınırsız büyümesini
+    önler ve her dönemin imzasını kalıcı olarak saklar (bkz. log_manager.rotate_and_seal_log)."""
     while True:
-        await asyncio.sleep(86400)
+        await asyncio.sleep(LOG_ROTATE_INTERVAL_SECONDS)
         try:
-            if os.path.exists(log_manager.LOG_FILE):
-                log_manager.sign_log_file()
+            if os.path.exists(log_manager.LOG_FILE) and os.path.getsize(log_manager.LOG_FILE) > 0:
+                log_manager.rotate_and_seal_log()
         except Exception as exc:
-            print(f"[daily-signer] Hata: {exc}", flush=True)
+            print(f"[daily-rotator] Hata: {exc}", flush=True)
 
 
 async def _dns_log_tailer():
@@ -213,7 +265,7 @@ async def _dns_log_tailer():
                 try:
                     session = _active_session_for_ip(db, ip)
                     username = session.username if session else "(kimliksiz)"
-                    mac = session.mac_address if session else simulate_mac(ip)
+                    mac = session.mac_address if session else get_real_mac(ip)
                     db.add(models.SiteVisit(
                         username=username, ip_address=ip, mac_address=mac,
                         domain=domain, query_type=qtype,
@@ -240,7 +292,7 @@ async def lifespan(app: FastAPI):
     log_manager.write_log("BOOT", "0.0.0.0", "00:00:00:00:00:00", "-", "Hotspot servisi baslatildi.")
     tasks = [
         asyncio.create_task(_expired_session_reaper()),
-        asyncio.create_task(_daily_log_signer()),
+        asyncio.create_task(_daily_log_rotator()),
         asyncio.create_task(_dns_log_tailer()),
     ]
     yield
@@ -275,10 +327,12 @@ def login_with_tc(
     response: Response,
     db: DbSession = Depends(get_db),
 ):
+    ip = get_client_ip(request)
+    _rate_limit(f"ratelimit:tc:{ip}", RATE_LIMIT_LOGIN_MAX, RATE_LIMIT_LOGIN_WINDOW)
+
     if not body.kvkk_approved:
         raise HTTPException(status_code=400, detail="KVKK açık rıza onayı zorunludur.")
     if not mock_mernis_verify(body.tc_no, body.first_name, body.last_name, body.birth_year):
-        ip = get_client_ip(request)
         log_manager.write_log(
             "AUTHFAIL", ip, simulate_mac(ip), body.tc_no,
             "MERNIS dogrulamasi basarisiz (gecersiz TC kimlik bilgileri).",
@@ -310,11 +364,22 @@ def sms_request(body: schemas.SmsRequestBody, request: Request):
     if not body.kvkk_approved:
         raise HTTPException(status_code=400, detail="KVKK açık rıza onayı zorunludur.")
     phone = normalize_phone(body.phone)
+    ip = get_client_ip(request)
+
+    if rdb.exists(f"otp_lock:{phone}"):
+        ttl = rdb.ttl(f"otp_lock:{phone}")
+        raise HTTPException(
+            status_code=429,
+            detail=f"Çok fazla hatalı deneme nedeniyle bu numara kilitli. {max(ttl, 1)} saniye sonra tekrar deneyin.",
+        )
+    # SMS bombalamayı önlemek için hem numara hem de IP bazında sınırla.
+    _rate_limit(f"ratelimit:smsreq:phone:{phone}", RATE_LIMIT_SMS_REQUEST_MAX, RATE_LIMIT_SMS_REQUEST_WINDOW)
+    _rate_limit(f"ratelimit:smsreq:ip:{ip}", RATE_LIMIT_SMS_REQUEST_MAX, RATE_LIMIT_SMS_REQUEST_WINDOW)
 
     code = f"{secrets.randbelow(10**6):06d}"
     rdb.setex(f"otp:{phone}", OTP_TTL, code)
+    rdb.delete(f"otp_fail:{phone}")  # yeni kod istendi, önceki başarısız deneme sayacını sıfırla
 
-    ip = get_client_ip(request)
     print(f"[SMS-SIMULATOR] SMS Gönderildi: {code} -> +90{phone}", flush=True)
     log_manager.write_log(
         "SMSOTP", ip, simulate_mac(ip), phone,
@@ -336,12 +401,38 @@ def sms_verify(
     db: DbSession = Depends(get_db),
 ):
     phone = normalize_phone(body.phone)
+
+    if rdb.exists(f"otp_lock:{phone}"):
+        ttl = rdb.ttl(f"otp_lock:{phone}")
+        raise HTTPException(
+            status_code=429,
+            detail=f"Çok fazla hatalı deneme nedeniyle bu numara kilitli. {max(ttl, 1)} saniye sonra tekrar deneyin.",
+        )
+
     stored = rdb.get(f"otp:{phone}")
     if stored is None:
         raise HTTPException(status_code=400, detail="Kodun süresi dolmuş. Lütfen yeni kod isteyin.")
     if stored != body.code.strip():
+        fail_key = f"otp_fail:{phone}"
+        fails = rdb.incr(fail_key)
+        if fails == 1:
+            rdb.expire(fail_key, OTP_TTL)
+        if fails >= OTP_MAX_ATTEMPTS:
+            rdb.delete(f"otp:{phone}")
+            rdb.delete(fail_key)
+            rdb.setex(f"otp_lock:{phone}", OTP_LOCKOUT_SECONDS, "1")
+            ip = get_client_ip(request)
+            log_manager.write_log(
+                "AUTHFAIL", ip, simulate_mac(ip), phone,
+                f"SMS OTP {OTP_MAX_ATTEMPTS} kez hatali girildi, numara {OTP_LOCKOUT_SECONDS}sn kilitlendi.",
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=f"Çok fazla hatalı deneme. Numara {OTP_LOCKOUT_SECONDS // 60} dakika kilitlendi.",
+            )
         raise HTTPException(status_code=400, detail="Doğrulama kodu hatalı.")
     rdb.delete(f"otp:{phone}")
+    rdb.delete(f"otp_fail:{phone}")
 
     user = db.query(models.User).filter(models.User.phone == phone).first()
     if not user:
@@ -398,6 +489,7 @@ def logout(request: Request, response: Response, db: DbSession = Depends(get_db)
                 "LOGOUT", session["ip"], session["mac"], session["username"],
                 "Kullanici oturumu sonlandirdi.",
             )
+            nft_manager.revoke_client(session["ip"])
     response.delete_cookie("session_token", path="/")
     return {"status": "ok", "message": "Oturum sonlandırıldı."}
 
@@ -420,6 +512,23 @@ def verify_logs():
         return log_manager.verify_log_file()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/v1/log/rotate", dependencies=[Depends(require_admin)])
+def rotate_logs():
+    """Aktif log dosyasını imzalayıp arşive taşır, imza kaydını hash-zincirine ekler.
+    Dosyaları taşıdığı için admin yetkisi ister (bkz. log_manager.rotate_and_seal_log)."""
+    try:
+        entry = log_manager.rotate_and_seal_log()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"status": "ok", "message": "Log dosyası döndürüldü ve zincire eklendi.", "entry": entry}
+
+
+@app.get("/api/v1/log/chain", dependencies=[Depends(require_admin)])
+def get_log_chain():
+    """Tüm imza zincirini (rotasyon geçmişi) baştan sona doğrulayıp döndürür."""
+    return log_manager.verify_chain()
 
 
 # ----------------------------------------------------------------------------

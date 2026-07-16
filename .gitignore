@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 logs/*.log
 logs/*.log.signed
+logs/*.chain.jsonl
+logs/archive/
 logs/signing_key.pem
 !logs/.gitkeep
 

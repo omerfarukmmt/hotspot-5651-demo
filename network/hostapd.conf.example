@@ -1,0 +1,29 @@
+# hostapd — LAN/AP konfigürasyonu (gerçek hotspot kurulumu için)
+#
+# Bu dosya, USB Wi-Fi adaptörünü (AP/master mode destekleyen bir chipset ile,
+# ör. Realtek RTL8188EUS/RTL8812AU veya Atheros AR9271) kendi SSID'sini yayınlayan
+# bir erişim noktasına çevirir. Laptop'un dahili Wi-Fi'ı bu plana dahil DEĞİLDİR —
+# o, wpa_supplicant ile telefonun mobil hotspot'una (WAN) bağlı kalır.
+#
+# Kullanım: bu dosyayı /etc/hostapd/hostapd.conf olarak kopyalayıp
+# `<interface>` yerine gerçek arayüz adını (ör. wlan1, `iw dev` ile bulunur) yazın.
+
+interface=wlan1
+driver=nl80211
+
+ssid=5651-Hotspot-Demo
+hw_mode=g
+channel=6
+country_code=TR
+ieee80211n=1
+wmm_enabled=1
+
+# Demo/staj sunumu için açık ağ (captive portal zaten kimlik doğruluyor).
+# Üretimde WPA2-PSK/Enterprise + portal birlikte de kullanılabilir.
+auth_algs=1
+wpa=0
+
+# Yönetim/kontrol arayüzü — nftables/dnsmasq script'lerinin AP durumunu
+# sorgulayabilmesi için (opsiyonel, debug amaçlı).
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0

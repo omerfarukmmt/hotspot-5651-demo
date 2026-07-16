@@ -50,13 +50,57 @@ Ardından tarayıcıda: **http://localhost:8080** → oturum olmadığı için o
 | GET | `/api/v1/auth/check` | Nginx auth_request kontrol ucu (200/401) |
 | GET | `/api/v1/session/status` | Kalan TTL, IP, MAC, kullanıcı |
 | POST | `/api/v1/logout` | Oturumu kapat (LOGOUT logu) |
-| POST | `/api/v1/log/sign` | Logun SHA-256 özetini RSA ile imzala |
-| GET | `/api/v1/log/verify` | İmza bütünlük doğrulaması |
+| POST | `/api/v1/log/sign` | Aktif logun SHA-256 özetini RSA ile imzala (dosyayı taşımaz) |
+| GET | `/api/v1/log/verify` | Aktif log için imza bütünlük doğrulaması |
+| POST | `/api/v1/log/rotate` | *(admin)* Aktif logu imzalayıp arşive taşır, zincire ekler |
+| GET | `/api/v1/log/chain` | *(admin)* Tüm rotasyon/imza zincirini doğrulayıp döndürür |
 | GET | `/api/v1/sitevisits` | *(admin)* Ham site ziyaret listesi (`?username=`, `?domain=`) |
 | GET | `/api/v1/sitevisits/summary` | *(admin)* Kullanıcı → ziyaret edilen domainler özeti |
 | GET | `/api/v1/health` | Sağlık kontrolü |
 
 *(admin)* işaretli uçlar `X-Admin-Key` header'ı ister (bkz. aşağıdaki bölüm).
+
+## Güvenlik sertleştirmeleri
+
+**Rate limiting (Redis sabit-pencere sayaç, `main.py _rate_limit`):**
+- `/api/v1/auth/tc`: IP başına 5 dakikada en fazla 10 deneme (`RATE_LIMIT_LOGIN_MAX` / `_WINDOW_SECONDS`).
+- `/api/v1/auth/sms/request`: hem telefon hem IP başına 10 dakikada en fazla 3 istek
+  (`RATE_LIMIT_SMS_REQUEST_MAX` / `_WINDOW_SECONDS`) — SMS bombalamayı önler.
+- Limit aşılınca `429 Too Many Requests` + kalan bekleme süresi dönülür.
+
+**OTP kilitleme (`main.py sms_verify`):**
+- Bir telefon numarası için art arda `OTP_MAX_ATTEMPTS` (varsayılan 5) yanlış kod girilirse,
+  mevcut kod iptal edilir ve numara `OTP_LOCKOUT_SECONDS` (varsayılan 900 sn / 15 dk) boyunca
+  hem yeni kod isteyemez hem de doğrulama yapamaz. Kilitlenme AUTHFAIL olarak imzalı loga da yazılır.
+- Yeni bir OTP başarıyla istendiğinde başarısız deneme sayacı sıfırlanır.
+
+Tüm eşikler docker-compose.yml üzerinden ortam değişkeni olarak ayarlanabilir.
+
+## Log imza zinciri ve rotasyon
+
+`sign_log_file`/`verify_log_file` yalnızca **o an aktif olan** `dhcp_activity.log`'u
+imzalar/doğrular; her yeniden imzalamada `.signed` dosyasının üzerine yazılır, yani
+önceki dönemin imzası kaybolur ve dosya sınırsız büyür.
+
+Bunu tamamlayan **rotasyon + imza zinciri** katmanı (`log_manager.rotate_and_seal_log` /
+`verify_chain`):
+- Aktif logu SHA-256 + RSA ile imzalar, `logs/archive/dhcp_activity-<zaman damgası>.log`
+  olarak arşivler ve imza kaydını `logs/dhcp_activity.chain.jsonl`e **ekler** (append-only,
+  önceki kayıtlar asla üzerine yazılmaz).
+- Her kayıt bir önceki kaydın `link_hash`'ini içerir (blockchain-stili hash zinciri):
+  geçmişteki bir dönem silinir/değiştirilir/sıralaması bozulursa zincir o noktadan
+  itibaren doğrulamada geçersiz çıkar.
+- Varsayılan olarak günde bir kez arka planda otomatik çalışır (`LOG_ROTATE_INTERVAL_SECONDS`,
+  varsayılan 86400 sn); `POST /api/v1/log/rotate` ile manuel de tetiklenebilir (admin yetkisi ister).
+- `GET /api/v1/log/chain` tüm zinciri uçtan uca doğrulayıp her dönem için
+  `chain_intact` / `signature_valid` / `archive_file_matches` durumlarını döner.
+
+**Bilinen sınır:** hash zinciri kendi içinde tutarlı yeniden hesaplanabilir (SHA-256 açık bir
+algoritma, gizli anahtar gerektirmez); asıl bütünlük garantisi her kaydın RSA imzasından gelir
+— imzalı bir dönemin içeriğini özel anahtar olmadan değiştirmek mümkün değildir. Zincirin
+tamamının (ör. bir dönemin sessizce silinmesi) dışarıdan bağımsız doğrulanabilmesi için gerçek
+sistemde `link_hash`'in periyodik olarak harici, güvenilir bir zaman damgası otoritesine
+(TÜBİTAK/BTK onaylı TSA) bildirilmesi gerekir — bu demo kapsamının dışındadır.
 
 Swagger arayüzü: http://localhost:8000/docs
 
@@ -100,8 +144,25 @@ ticari çözümlerin çoğu da bu yaklaşımı kullanır.
   `query[A] example.com from 192.168.4.50` formatında bir satır eklemeniz
   yeterlidir; tailer bunu birkaç saniye içinde işler.
 
+## Gerçek Ağ Kurulumu (hostapd + dnsmasq + nftables)
+
+Docker Compose demosu, girişi kontrol eder ama gerçek ağ trafiğini kesmez
+(Nginx `auth_request` sadece reverse-proxy seviyesinde çalışır). Gerçek bir
+hotspot'a dönüştürmek için `network/` dizinindeki hostapd/dnsmasq/nftables
+konfigürasyonlarına ve `network/setup-ap.sh` kurulum betiğine bakın —
+ayrıntılı mimari ve adımlar `network/README.md`'de.
+
+Özetle: backend artık login/logout/expire anlarında gerçek `nft` komutlarını
+tetikleyip (`backend/nft_manager.py`) istemcinin IP'sini bir allow-set'e
+ekliyor/siliyor; `network/nftables.conf`'taki forward zinciri varsayılan DROP
+olduğu için oturumu olmayan bir cihaz artık hiçbir yere çıkamıyor. Bu davranış
+`ENABLE_NFTABLES=true` olmadan **devre dışıdır** (Docker demo ortamında `nft`
+binary'si yok, bu yüzden varsayılan `false`).
+
 ## Notlar
 
-- MAC adresi demo ortamında IP'den deterministik türetilir (`02:00:AA:BB:CC:DD`); gerçek kurulumda DHCP/ARP tablosundan okunur.
+- MAC adresi: `DNSMASQ_LEASES_FILE` tanımlıysa gerçek dnsmasq lease dosyasından
+  okunur (`backend/main.py get_real_mac`); tanımlı değilse (Docker demo
+  varsayılanı) IP'den deterministik türetilir (`02:00:AA:BB:CC:DD`).
 - RSA özel anahtarı (`logs/signing_key.pem`) ilk açılışta otomatik üretilir; gerçek sistemde HSM/KMS ve BTK onaylı zaman damgası kullanılır.
 - Redis TTL'i dolan oturumlar arka plan görevi ile PostgreSQL'de `is_active=false` yapılır ve EXPIRE logu yazılır; log imzalama ayrıca günde bir otomatik tetiklenir.

@@ -35,7 +35,24 @@ services:
       SESSION_TTL_SECONDS: "7200"
       OTP_TTL_SECONDS: "180"
       DNSMASQ_LOG_FILE: /app/logs/dnsmasq_query.log
+      # Gerçek hotspot kurulumunda dnsmasq lease dosyasına işaret eder (bkz. network/README.md);
+      # boş kalırsa MAC adresi demo modunda IP'den türetilir.
+      DNSMASQ_LEASES_FILE: ""
+      # Gerçek Linux hotspot kutusunda true yapılır; backend'in NET_ADMIN + host network
+      # gerektirir (bkz. network/README.md). Docker demo ortamında false kalmalı.
+      ENABLE_NFTABLES: "false"
       ADMIN_API_KEY: "changeme-admin-key"
+      # Rate limiting / OTP kilitleme (bkz. README.md "Güvenlik sertleştirmeleri").
+      RATE_LIMIT_LOGIN_MAX: "10"
+      RATE_LIMIT_LOGIN_WINDOW_SECONDS: "300"
+      RATE_LIMIT_SMS_REQUEST_MAX: "3"
+      RATE_LIMIT_SMS_REQUEST_WINDOW_SECONDS: "600"
+      OTP_MAX_ATTEMPTS: "5"
+      OTP_LOCKOUT_SECONDS: "900"
+      # Log rotasyonu: aktif log dosyası bu aralıkla imzalanıp archive/'a taşınır
+      # ve dhcp_activity.chain.jsonl'e eklenir. Demoda kısa tutmak isterseniz
+      # (ör. birkaç dakikada bir rotasyonu göstermek için) düşürebilirsiniz.
+      LOG_ROTATE_INTERVAL_SECONDS: "86400"
     volumes:
       - ./logs:/app/logs
     ports:
