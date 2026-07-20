@@ -130,8 +130,10 @@ Kararlaştırılan mimari:
       girmesin diye `docker-compose.yml`'de `${ADMIN_API_KEY:?...}` referansına
       çevrildi, gerçek değer `.env`'e (gitignored) taşındı; `.env.example`
       placeholder olarak repoya eklendi.
-- [ ] `logs/dnsmasq_query.log` içindeki test verisini temizle (youtube/
-      instagram gibi sahte satırlar test amaçlıydı).
+- [x] `logs/dnsmasq_query.log` içindeki test verisini temizle (youtube/
+      instagram gibi sahte satırlar test amaçlıydı) — 2026-07-20'de dosya
+      sıfırlandı (tailer truncate'i baştan okuyarak karşılıyor, bkz.
+      `dns_log_watcher.py follow()`).
 - [ ] Yukarıdaki "gerçek hotspot" checklist'i tamamlanmadan bu sistem sadece
       Docker demo'sunda çalışır, gerçek cihazlarla internet paylaşmaz.
 - [ ] hostapd/nftables kurulumunu demo gününden 1-2 gün önce prova et.
