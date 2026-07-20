@@ -41,7 +41,7 @@ services:
       # Gerçek Linux hotspot kutusunda true yapılır; backend'in NET_ADMIN + host network
       # gerektirir (bkz. network/README.md). Docker demo ortamında false kalmalı.
       ENABLE_NFTABLES: "false"
-      ADMIN_API_KEY: "changeme-admin-key"
+      ADMIN_API_KEY: "${ADMIN_API_KEY:?ADMIN_API_KEY .env dosyasinda tanimli olmali}"
       # Rate limiting / OTP kilitleme (bkz. README.md "Güvenlik sertleştirmeleri").
       RATE_LIMIT_LOGIN_MAX: "10"
       RATE_LIMIT_LOGIN_WINDOW_SECONDS: "300"

@@ -20,6 +20,13 @@ FastAPI ──► PostgreSQL (users, sessions)  — kalıcı kayıt
 
 ## Çalıştırma
 
+İlk çalıştırmadan önce `.env.example`'ı `.env` olarak kopyalayıp `ADMIN_API_KEY`'i
+kendi değerinizle değiştirin (`.env` `.gitignore`'da, git'e girmez):
+
+```bash
+cp .env.example .env
+```
+
 ```bash
 docker-compose up --build
 ```

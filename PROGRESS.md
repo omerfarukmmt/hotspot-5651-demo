@@ -124,8 +124,12 @@ Kararlaştırılan mimari:
 
 ## Demo günü öncesi yapılacaklar (checklist)
 
-- [ ] `docker-compose.yml` içindeki `ADMIN_API_KEY` değerini değiştir
-      (varsayılan `changeme-admin-key` demoya açık bırakılmamalı).
+- [x] `docker-compose.yml` içindeki `ADMIN_API_KEY` değerini değiştir
+      (varsayılan `changeme-admin-key` demoya açık bırakılmamalı) — 2026-07-20'de
+      rastgele 64 karakterlik hex anahtarla değiştirildi. Anahtar git'e
+      girmesin diye `docker-compose.yml`'de `${ADMIN_API_KEY:?...}` referansına
+      çevrildi, gerçek değer `.env`'e (gitignored) taşındı; `.env.example`
+      placeholder olarak repoya eklendi.
 - [ ] `logs/dnsmasq_query.log` içindeki test verisini temizle (youtube/
       instagram gibi sahte satırlar test amaçlıydı).
 - [ ] Yukarıdaki "gerçek hotspot" checklist'i tamamlanmadan bu sistem sadece
