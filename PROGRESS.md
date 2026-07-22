@@ -122,6 +122,62 @@ Kararlaştırılan mimari:
   arşivlenen dosyada tek karakter değiştirilince `archive_file_matches: false`
   ile bozulmanın doğru tespit edildiği doğrulandı.
 
+## Laptop üzerinde harici Wi-Fi adaptörsüz AP denemesi (2026-07-22, DEVAM EDİYOR)
+
+Amaç: `network/` dizinindeki gerçek hotspot planı (bkz. yukarıdaki 2. bölüm)
+şu ana kadar "laptop dahili Wi-Fi = WAN (telefon hotspot'una bağlı)" +
+"USB Wi-Fi adaptör = LAN/AP" ikilisini varsayıyordu. Kullanıcı harici adaptör
+almadan, laptopun **tek** dahili Wi-Fi kartıyla hem WAN hem AP'yi aynı anda
+yapmak istiyor. Bu bölüm, bu alternatifin değerlendirilmesinin günlüğü.
+
+**Elenen seçenekler:**
+- **WSL2 içinde hostapd:** Laptopun Wi-Fi kartı **PCI** (Aygıt Yöneticisi'nde
+  "Bus reporting information: PCI" olarak doğrulandı). WSL2'nin PCI cihazlara
+  gerçek passthrough desteği yok; tam Hyper-V VM + Discrete Device Assignment
+  (DDA) gerekir ki bu da tüketici Wi-Fi çipset/sürücülerinde genelde
+  çalışmıyor ve kartı Windows'tan tamamen koparıyor. **Bu yol kapalı.**
+- **Windows Mobil Etkin Nokta (ICS):** Teknik olarak mümkün (Windows sürücü
+  katmanında STA+AP eşzamanlılığını destekliyor) ama `hostapd`/`dnsmasq`/
+  `nftables` zincirinin tamamen Windows eşdeğerlerine (`nft_manager.py`
+  yerine WFP/Windows Firewall, dnsmasq lease yerine ICS DHCP) yeniden
+  yazılmasını gerektirir. **Şimdilik seçilmedi**, kullanıcı bunun yerine
+  Ubuntu'yu seçti.
+
+**Seçilen yol:** Laptopta **Ubuntu zaten kurulu** (dual-boot/ayrı bir işletim
+sistemi olarak) — VM yok, kart doğrudan Linux'a görünür. Mevcut
+`network/setup-ap.sh` script'i `WAN_IF`/`LAN_IF`'i zaten env değişkeni olarak
+parametrik aldığı için (aynı script, iki farklı fiziksel adaptör yerine aynı
+fiziksel kartın iki *sanal* arayüzüyle de çalıştırılabilir) kod tarafında
+değişiklik gerekmiyor — tek açık soru, kartın/sürücünün tek radyoda
+**concurrent AP + managed (STA) modunu** destekleyip desteklemediği.
+
+**Sıradaki adım (henüz yapılmadı):** Laptopta Ubuntu'dan çalıştırılacak:
+```bash
+iw list | grep -A 15 "valid interface combinations"
+```
+Bakılacak şey:
+- Çıktıda `managed` ile `AP` rolünü birlikte içeren bir kombinasyon var mı
+  (yoksa bu kart concurrent AP+STA desteklemiyor demektir — plan burada
+  tıkanır, USB adaptör veya Windows ICS'e geri dönülür).
+- Varsa, `#channels <= 1` mi (AP, WAN'ın bağlı olduğu kanalla **aynı** kanalda
+  olmak zorunda — `hostapd.conf.example`'daki `channel=` telefonun hotspot
+  kanalıyla eşleştirilmeli) yoksa `<= 2` mi (farklı kanal da olur, daha esnek).
+
+**Kombinasyon destekleniyorsa sıradaki adımlar:**
+1. Sanal AP arayüzü oluştur: `sudo iw dev wlan0 interface add wlan1 type __ap`
+   (gerçek isimler `iw dev`/`iw phy` ile teyit edilmeli).
+2. NetworkManager'ın yeni sanal arayüzü (`wlan1`) yönetime almasını engelle
+   (`nmcli device set wlan1 managed no` veya `NetworkManager.conf`
+   `unmanaged-devices`) — aksi halde hostapd ile çakışır.
+3. `hostapd.conf.example` içindeki `channel=6` değerini WAN'ın bağlı olduğu
+   gerçek kanalla eşleştir (tek kanal kısıtı varsa).
+4. `sudo WAN_IF=wlan0 LAN_IF=wlan1 ./network/setup-ap.sh` (script değişmeden
+   kullanılabilir, bkz. yukarıda).
+
+**Kombinasyon desteklenmiyorsa:** ya `network/README.md`'deki orijinal
+USB adaptör planına dön, ya da Windows Mobil Etkin Nokta (ICS) yolunu
+(yukarıda elenen ama teknik olarak mümkün olan seçenek) yeniden değerlendir.
+
 ## Demo günü öncesi yapılacaklar (checklist)
 
 - [x] `docker-compose.yml` içindeki `ADMIN_API_KEY` değerini değiştir
