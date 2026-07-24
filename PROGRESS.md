@@ -20,7 +20,7 @@ Redis + Nginx, Docker Compose ile ayakta (bkz. `README.md`).
   (`logs/dhcp_activity.log`, `.signed`).
 - Nginx `auth_request` ile "internet" simülasyonu (gerçek WAN çıkışı yok).
 
-### 2. Gerçek hotspot'a dönüştürme planı (config + backend entegrasyonu KODLANDI, donanımda TEST EDİLMEDİ)
+### 2. Gerçek hotspot'a dönüştürme planı (KODLANDI + gerçek donanımda UÇTAN UCA TEST EDİLDİ — 2026-07-24)
 Amaç: sahte "internet simülasyonu"nu gerçek, internete çıkan bir ağa çevirmek.
 
 Kararlaştırılan mimari:
@@ -54,17 +54,45 @@ Kararlaştırılan mimari:
       `msftconnecttest.com` vb.) `network/dnsmasq.conf.example`'da AP IP'sine
       yönlendirilmesi.
 
-**Henüz yapılmadı:**
-- [ ] USB Wi-Fi adaptörün temin edilip AP modunun gerçek donanımda test
-      edilmesi (donanım bağımlılığı — bu, yazılım tarafından bağımsız).
-- [ ] `network/setup-ap.sh` + yukarıdaki config'lerin gerçek bir Linux kutusunda
-      (Raspberry Pi/eski laptop) uçtan uca prova edilmesi — şu ana kadar sadece
-      dosya olarak yazıldı, hiç çalıştırılmadı/test edilmedi.
-- [ ] Backend konteynerinin gerçek kurulumda `nft` komutunu çalıştırabilmesi
-      için `--network host` + `--cap-add=NET_ADMIN` ile ayağa kaldırılması
-      (ya da backend'i konteynersiz, host üzerinde çalıştırma) — henüz
-      `docker-compose.yml`'e bu mod eklenmedi, sadece `network/README.md`'de
-      not olarak var.
+**Tamamlandı (2026-07-24, bkz. aşağıdaki "Laptop üzerinde..." bölümünün sonu):**
+- [x] USB adaptöre gerek kalmadan, laptopun tek dahili Wi-Fi kartıyla
+      (concurrent AP+STA) hem WAN hem AP çalıştırıldı — donanım/sürücü desteği
+      doğrulandı (Intel AX201/iwlwifi).
+- [x] `network/setup-ap.sh` + hostapd/dnsmasq/nftables config'leri gerçek
+      donanımda (bu Ubuntu laptop) uçtan uca çalıştırıldı ve doğrulandı.
+- [x] Backend konteyneri `--network host` + `--cap-add=NET_ADMIN` ile ayağa
+      kaldırıldı — ama ana `docker-compose.yml`'e DEĞİL, ayrı bir
+      **`docker-compose.host.yml`** override dosyasına eklendi (ana dosya
+      demo/cross-platform modda değişmeden kaldı). Çalıştırma:
+      ```bash
+      sudo docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
+      ```
+      nginx de aynı override'da `network_mode: host`'a alındı (backend'e
+      servis-DNS'siz ulaşabilmek + gerçek AP istemcilerinin `192.168.4.1:80`'e
+      doğrudan erişebilmesi için), ayrı bir `nginx/nginx.host.conf` ile.
+- [x] Gerçek bir telefon `5651-Hotspot-Demo` SSID'sine bağlandı, captive portal
+      açıldı, TC+OTP girişi yapıldı, `nft_manager.py`'nin gerçekten
+      `nft add/delete element` çalıştırdığı doğrulandı (host'un canlı
+      `allowed_clients` set'i değişti), giriş sonrası **gerçek internete**
+      çıkabildiği doğrulandı.
+
+Yol boyunca çıkan ve düzeltilen yan etkiler (ayrıntılar aşağıdaki
+"Laptop üzerinde..." bölümünde):
+- Bu laptopta Docker hiç kurulu değildi → `docker.io` + `docker-compose-v2`
+  kuruldu (Ubuntu'da `docker-compose-plugin` diye bir paket YOK).
+- AP'nin kendi nftables ruleset'i (varsayılan DROP forward zinciri) Docker'ın
+  kendi container'larının internetini de kırmıştı → `network/nftables.conf`'a
+  `docker0` için açık `accept` kuralı eklendi.
+- `dnsmasq`'ın systemd birimi upstream DNS'i `resolvconf`/systemd-networkd
+  entegrasyonundan bekliyordu, bu makinede WAN NetworkManager ile yönetildiği
+  için bu sessizce çalışmıyordu → `network/dnsmasq.conf.example`'a
+  `server=127.0.0.53` (systemd-resolved stub) eklendi. Bu olmadan gerçek
+  siteler DNS seviyesinde "Refused" dönüyordu (telefonla yapılan gerçek testte
+  yakalandı: arama sonuçları geliyordu ama sitelere girilemiyordu).
+- `hostapd`, telefonun kendi kanalını değiştirmesi (6→1) durumunda sessizce
+  yayın yapmayı kesiyor ama `systemctl status` hâlâ "active" gösteriyor —
+  gerçek durumu her zaman `iw dev ap0 info` (SSID + kanal görünüyor mu) ile
+  teyit etmek gerekiyor.
 
 ### 3. Kullanıcı bazlı site ziyaret loglama (KODLANDI ve test edildi)
 - `backend/dns_log_watcher.py`: dnsmasq sorgu logunu (`query[TİP] domain from IP`)
@@ -122,7 +150,7 @@ Kararlaştırılan mimari:
   arşivlenen dosyada tek karakter değiştirilince `archive_file_matches: false`
   ile bozulmanın doğru tespit edildiği doğrulandı.
 
-## Laptop üzerinde harici Wi-Fi adaptörsüz AP denemesi (2026-07-22, DEVAM EDİYOR)
+## Laptop üzerinde harici Wi-Fi adaptörsüz AP denemesi (2026-07-22 → 2026-07-24, TAMAMLANDI)
 
 Amaç: `network/` dizinindeki gerçek hotspot planı (bkz. yukarıdaki 2. bölüm)
 şu ana kadar "laptop dahili Wi-Fi = WAN (telefon hotspot'una bağlı)" +
@@ -151,32 +179,47 @@ fiziksel kartın iki *sanal* arayüzüyle de çalıştırılabilir) kod tarafın
 değişiklik gerekmiyor — tek açık soru, kartın/sürücünün tek radyoda
 **concurrent AP + managed (STA) modunu** destekleyip desteklemediği.
 
-**Sıradaki adım (henüz yapılmadı):** Laptopta Ubuntu'dan çalıştırılacak:
-```bash
-iw list | grep -A 15 "valid interface combinations"
-```
-Bakılacak şey:
-- Çıktıda `managed` ile `AP` rolünü birlikte içeren bir kombinasyon var mı
-  (yoksa bu kart concurrent AP+STA desteklemiyor demektir — plan burada
-  tıkanır, USB adaptör veya Windows ICS'e geri dönülür).
-- Varsa, `#channels <= 1` mi (AP, WAN'ın bağlı olduğu kanalla **aynı** kanalda
-  olmak zorunda — `hostapd.conf.example`'daki `channel=` telefonun hotspot
-  kanalıyla eşleştirilmeli) yoksa `<= 2` mi (farklı kanal da olur, daha esnek).
+**Sonuç:** Kart concurrent AP+STA destekliyor (`iw list` combo:
+`#{managed}<=1, #{AP,P2P-client,P2P-GO}<=1, total<=3, #channels<=1` — tek
+kanal kısıtı var, yani AP her zaman WAN'ın o an bağlı olduğu kanalda olmak
+zorunda). Uygulanan adımlar:
 
-**Kombinasyon destekleniyorsa sıradaki adımlar:**
-1. Sanal AP arayüzü oluştur: `sudo iw dev wlan0 interface add wlan1 type __ap`
-   (gerçek isimler `iw dev`/`iw phy` ile teyit edilmeli).
-2. NetworkManager'ın yeni sanal arayüzü (`wlan1`) yönetime almasını engelle
-   (`nmcli device set wlan1 managed no` veya `NetworkManager.conf`
-   `unmanaged-devices`) — aksi halde hostapd ile çakışır.
-3. `hostapd.conf.example` içindeki `channel=6` değerini WAN'ın bağlı olduğu
-   gerçek kanalla eşleştir (tek kanal kısıtı varsa).
-4. `sudo WAN_IF=wlan0 LAN_IF=wlan1 ./network/setup-ap.sh` (script değişmeden
-   kullanılabilir, bkz. yukarıda).
+1. Sanal AP arayüzü: `sudo iw dev wlp0s20f3 interface add ap0 type __ap`.
+2. NetworkManager'ın `ap0`'ı ele geçirmesi (oluşur oluşmaz otomatik
+   yönetime alıp wpa_supplicant ile kapmaya çalışıyordu — `nmcli device set
+   ap0 managed no` komutu her zaman bir adım geç kalıyordu, "Device or
+   resource busy" hatasının asıl kaynağı buydu) **kalıcı olarak**
+   `/etc/NetworkManager/conf.d/10-unmanaged-ap0.conf` ile engellendi:
+   ```
+   [keyfile]
+   unmanaged-devices=interface-name:ap0
+   ```
+   Bu dosya repo dışında (sistem seviyesinde) — başka bir makinede
+   tekrarlanırsa bu adım yeniden yapılmalı.
+3. `hostapd.conf.example`'daki `channel=` değeri WAN'ın o anki kanalıyla
+   eşleştirildi — ama bu **statik** bir eşleşme değil: telefon hotspot'u
+   kanalını kendi kendine değiştirebiliyor (bu oturumda 6'dan 1'e değişti),
+   bu durumda hostapd sessizce yayını kesiyor (`systemctl status` yine de
+   "active" gösteriyor). AP'yi tekrar ayağa kaldırırken önce
+   `iw dev wlp0s20f3 info` ile WAN'ın güncel kanalını kontrol edip
+   `/etc/hostapd/hostapd.conf`'taki `channel=`'ı ona göre güncellemek ve
+   `systemctl restart hostapd` sonrası `iw dev ap0 info`'da SSID+kanalın
+   göründüğünü teyit etmek gerekiyor.
+4. `sudo WAN_IF=wlp0s20f3 LAN_IF=ap0 ./network/setup-ap.sh` — script değişmeden
+   çalıştı, uçtan uca doğrulandı (hostapd+dnsmasq+nftables).
+5. Docker bu makinede kurulu değildi, kuruldu (`docker.io` +
+   `docker-compose-v2`); backend gerçek `ENABLE_NFTABLES=true` +
+   `--network host --cap-add=NET_ADMIN` ile `docker-compose.host.yml`
+   override'ından ayağa kaldırıldı (bkz. yukarıdaki bölüm 2).
+6. Gerçek bir telefonla (Galaxy Tab S9 FE) uçtan uca test edildi: bağlantı →
+   captive portal → TC+OTP girişi → gerçek nftables gatekeeping → gerçek DNS
+   çözümleme (bkz. bölüm 2'deki `dnsmasq` upstream düzeltmesi) → gerçek
+   internet erişimi, hepsi çalışır durumda doğrulandı.
 
-**Kombinasyon desteklenmiyorsa:** ya `network/README.md`'deki orijinal
-USB adaptör planına dön, ya da Windows Mobil Etkin Nokta (ICS) yolunu
-(yukarıda elenen ama teknik olarak mümkün olan seçenek) yeniden değerlendir.
+`ap0` sanal bir arayüz olduğu için **reboot'ta kalıcı değil** — her açılışta
+`iw dev wlp0s20f3 interface add ap0 type __ap` ile yeniden oluşturulup
+`setup-ap.sh` tekrar çalıştırılmalı (NetworkManager conf.d düzeltmesi kalıcı
+olduğu için "busy" hatası bir daha çıkmıyor).
 
 ## Demo günü öncesi yapılacaklar (checklist)
 
@@ -190,9 +233,17 @@ USB adaptör planına dön, ya da Windows Mobil Etkin Nokta (ICS) yolunu
       instagram gibi sahte satırlar test amaçlıydı) — 2026-07-20'de dosya
       sıfırlandı (tailer truncate'i baştan okuyarak karşılıyor, bkz.
       `dns_log_watcher.py follow()`).
-- [ ] Yukarıdaki "gerçek hotspot" checklist'i tamamlanmadan bu sistem sadece
-      Docker demo'sunda çalışır, gerçek cihazlarla internet paylaşmaz.
-- [ ] hostapd/nftables kurulumunu demo gününden 1-2 gün önce prova et.
+- [x] Yukarıdaki "gerçek hotspot" checklist'i 2026-07-24'te tamamlandı ve
+      gerçek bir telefonla uçtan uca test edildi (bkz. bölüm 2 ve "Laptop
+      üzerinde..." bölümü) — sistem artık Docker demo'sunun ötesinde, gerçek
+      cihazlarla internet paylaşabiliyor.
+- [x] hostapd/nftables kurulumu bu laptopta prova edildi (2026-07-24).
+- [ ] Demo günü öncesi son bir kez daha prova et — özellikle telefon hotspot'un
+      kanalını değiştirmiş olabileceğini unutma (`iw dev wlp0s20f3 info` ile
+      kontrol, gerekirse `/etc/hostapd/hostapd.conf`'ta `channel=` güncelle).
+- [ ] `docker-compose.host.yml` ile ayağa kaldırma komutunu ezberden değil,
+      buradan/`network/README.md`'den kopyala:
+      `sudo docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build`
 
 ## Nasıl çalıştırılır
 
