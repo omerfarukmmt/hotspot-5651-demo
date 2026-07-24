@@ -157,14 +157,26 @@ Docker Compose demosu, girişi kontrol eder ama gerçek ağ trafiğini kesmez
 (Nginx `auth_request` sadece reverse-proxy seviyesinde çalışır). Gerçek bir
 hotspot'a dönüştürmek için `network/` dizinindeki hostapd/dnsmasq/nftables
 konfigürasyonlarına ve `network/setup-ap.sh` kurulum betiğine bakın —
-ayrıntılı mimari ve adımlar `network/README.md`'de.
+ayrıntılı mimari, adımlar ve bilinen kırılganlıklar `network/README.md`'de.
 
 Özetle: backend artık login/logout/expire anlarında gerçek `nft` komutlarını
 tetikleyip (`backend/nft_manager.py`) istemcinin IP'sini bir allow-set'e
 ekliyor/siliyor; `network/nftables.conf`'taki forward zinciri varsayılan DROP
 olduğu için oturumu olmayan bir cihaz artık hiçbir yere çıkamıyor. Bu davranış
-`ENABLE_NFTABLES=true` olmadan **devre dışıdır** (Docker demo ortamında `nft`
-binary'si yok, bu yüzden varsayılan `false`).
+`ENABLE_NFTABLES=true` olmadan **devre dışıdır** (Docker demo ortamındaki
+varsayılan `docker-compose.yml` bunu `false` bırakır).
+
+**2026-07-24'te gerçek donanımda uçtan uca test edildi** (USB adaptör
+olmadan, laptopun tek dahili Wi-Fi kartıyla): gerçek bir telefon SSID'ye
+bağlandı, captive portal + TC/OTP girişi + gerçek nftables gatekeeping +
+gerçek internet erişimi doğrulandı. Bu mod için ana `docker-compose.yml`
+**değiştirilmedi** — ayrı bir override dosyası olan `docker-compose.host.yml`
+backend'i (ve nginx'i) `--network host` + backend'e `--cap-add=NET_ADMIN` ile
+ayağa kaldırır:
+
+```bash
+sudo docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
+```
 
 ## Notlar
 
