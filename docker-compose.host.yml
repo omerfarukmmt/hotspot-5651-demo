@@ -1,0 +1,35 @@
+# Gercek hotspot kutusu (bu Linux laptop) icin override.
+#
+# Kullanim:
+#   sudo docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
+#
+# Ana docker-compose.yml demo/cross-platform modda degismeden kalir (ENABLE_NFTABLES=false,
+# backend bridge network'te "backend:8000" olarak). Bu dosya backend'i host network'e
+# tasiyip NET_ADMIN veriyor ki gercek nft komutlari (bkz. backend/nft_manager.py)
+# host'un ap0/wlp0s20f3 arayuzlerini yoneten ruleset'i degistirebilsin
+# (bkz. network/README.md, PROGRESS.md "Henuz yapilmadi" maddesi).
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  backend:
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    ports: !reset []
+    environment:
+      DATABASE_URL: postgresql://hotspot:hotspot_secret@127.0.0.1:5432/hotspot_db
+      REDIS_URL: redis://127.0.0.1:6379/0
+      ENABLE_NFTABLES: "true"
+
+  nginx:
+    network_mode: host
+    ports: !reset []
+    volumes:
+      - ./nginx/nginx.host.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro

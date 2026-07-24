@@ -36,7 +36,16 @@ address=/www.msftconnecttest.com/192.168.4.1
 address=/msftncsi.com/192.168.4.1
 address=/detectportal.firefox.com/192.168.4.1
 
-# Diğer tüm domain isimleri normal şekilde yukarı akışa (upstream) çözülür;
-# upstream DNS sunucusu telefon hotspot'undan DHCP ile öğrenilir
-# (bu dosyada elle bir "server=" satırı EKLENMEMELİDİR ki upstream otomatik
-# algılansın — bkz. setup-ap.sh).
+# Diğer tüm domain isimleri normal şekilde yukarı akışa (upstream) çözülür.
+#
+# Not: dnsmasq'ın systemd birimi (Debian/Ubuntu paketi) "-r /run/dnsmasq/resolv.conf"
+# ile başlatılır; bu dosya normalde "resolvconf" hook'u tarafından, WAN arayüzü
+# systemd-networkd ile yönetiliyorsa otomatik doldurulur. Bu arayüz NetworkManager
+# ile yönetiliyorsa (wpa_supplicant/telefon hotspot senaryosu — bu projenin varsayımı)
+# hook, "dbus-org.freedesktop.network1.service bulunamadı" hatasıyla sessizce
+# başarısız olur ve /run/dnsmasq/resolv.conf hiç oluşmaz — dnsmasq'ın upstream
+# sunucusu KALMAZ, "address=" ile eşleşmeyen her sorgu (yani gerçek internet
+# taraması) REFUSED döner. Bu yüzden burada systemd-resolved'ın kendi stub
+# resolver'ına (127.0.0.53) elle yönlendiriyoruz — bu, WAN arayüzü ne olursa
+# olsun (NetworkManager onu her zaman doğru upstream'e göre günceller) çalışır.
+server=127.0.0.53
