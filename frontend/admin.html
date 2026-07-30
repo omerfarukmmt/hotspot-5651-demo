@@ -6,8 +6,9 @@
 <title>Site Ziyaretleri | Yönetici Paneli</title>
 <style>
   :root {
-    --bg: #0f172a; --card: #1e293b; --ink: #e2e8f0; --muted: #94a3b8;
-    --accent: #60a5fa; --ok: #4ade80; --err: #f87171; --border: #334155;
+    --bg: #0f172a; --card: #1e293b; --card2: #172033; --ink: #e2e8f0; --muted: #94a3b8;
+    --accent: #60a5fa; --accent-dim: rgba(96,165,250,.15); --ok: #4ade80; --err: #f87171;
+    --border: #334155; --chip: #223047;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -16,40 +17,116 @@
   }
   h1 { font-size: 1.4rem; margin-bottom: 4px; }
   .sub { color: var(--muted); font-size: .85rem; margin-bottom: 20px; }
+
   .toolbar {
-    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 14px 16px; margin-bottom: 20px;
+    padding: 14px 16px; margin-bottom: 16px;
   }
   input, select {
     background: #0f172a; border: 1px solid var(--border); color: var(--ink);
     padding: 8px 10px; border-radius: 8px; font-size: .85rem;
   }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   label { font-size: .78rem; color: var(--muted); display: block; margin-bottom: 4px; }
   button {
     background: var(--accent); color: #0f172a; border: none; border-radius: 8px;
     padding: 9px 16px; font-weight: 700; cursor: pointer; font-size: .85rem;
   }
   button:hover { opacity: .9; }
-  #status { font-size: .78rem; color: var(--muted); margin-left: auto; }
+  button.danger { background: var(--err); color: #1a0a0a; }
+  #status { font-size: .78rem; color: var(--muted); margin-left: auto; white-space: nowrap; }
   #status.err { color: var(--err); }
   #status.ok { color: var(--ok); }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .checkline { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--muted); }
+  .checkline input { width: auto; padding: 0; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  @media (max-width: 700px) { .stats { grid-template-columns: 1fr 1fr; } }
+  .stat-tile {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px;
+  }
+  .stat-tile .n { font-size: 1.5rem; font-weight: 700; color: var(--accent); line-height: 1.2; }
+  .stat-tile .l { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
   @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
   .panel {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 16px 18px; overflow-x: auto;
+    padding: 16px 18px;
   }
-  .panel h2 { font-size: 1rem; margin-bottom: 12px; color: var(--accent); }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .panel h2 { font-size: 1rem; color: var(--accent); }
+  .panel input.mini-search {
+    font-size: .78rem; padding: 6px 9px; width: 160px;
+  }
+
   table { width: 100%; border-collapse: collapse; font-size: .82rem; }
   th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: .7rem; }
-  .user-block { margin-bottom: 14px; }
-  .user-block h3 {
-    font-size: .85rem; color: var(--ok); font-family: Consolas, monospace;
-    margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: .7rem; position: sticky; top: 0; background: var(--card); }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--ink); }
+  th.sortable .arrow { opacity: .4; margin-left: 3px; }
+  th.sortable.active .arrow { opacity: 1; color: var(--accent); }
+  .table-scroll { max-height: 520px; overflow: auto; }
+  tbody tr:hover { background: rgba(255,255,255,.03); }
+  .row-new { position: relative; }
+  .row-new td:first-child::before {
+    content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok); margin-right: 6px; vertical-align: middle;
   }
+
+  .domain-cell { display: flex; align-items: center; gap: 6px; font-family: Consolas, monospace; }
+  .favicon { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  .qtype { font-size: .68rem; padding: 2px 6px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  .qtype.A { color: var(--ok); }
+  .qtype.AAAA { color: var(--accent); }
+
+  .user-block { margin-bottom: 18px; }
+  .user-block:last-child { margin-bottom: 0; }
+  .user-block-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+  .user-block h3 { font-size: .88rem; color: var(--ok); font-family: Consolas, monospace; }
+  .user-block .total { font-size: .74rem; color: var(--muted); }
+  .toggle-link {
+    background: none; border: none; color: var(--accent); font-size: .74rem;
+    font-weight: 600; padding: 0; cursor: pointer;
+  }
+  .toggle-link:hover { text-decoration: underline; }
+
+  .chip-cloud { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: flex; align-items: center; gap: 5px; background: var(--chip);
+    border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px 4px 6px;
+    font-size: .78rem; cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .chip .count {
+    background: var(--accent-dim); color: var(--accent); border-radius: 999px;
+    padding: 0 6px; font-size: .68rem; font-weight: 700;
+  }
+  .user-block table { margin-top: 10px; display: none; }
+  .user-block.expanded table { display: table; }
+  .user-block.expanded .chip-cloud { display: none; }
+
   .empty { color: var(--muted); font-size: .85rem; padding: 12px 0; }
+  .spinner {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: spin .7s linear infinite; margin-right: 6px; vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--card); border: 1px solid var(--accent); color: var(--ink);
+    padding: 8px 16px; border-radius: 8px; font-size: .8rem; opacity: 0;
+    transition: opacity .2s, transform .2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -66,33 +143,144 @@
     <input type="text" id="filterUser" placeholder="TC no / telefon">
   </div>
   <button onclick="loadAll()">Yenile</button>
-  <label style="display:flex;align-items:center;gap:6px;margin-top:16px;">
-    <input type="checkbox" id="autoRefresh" style="width:auto;"> Otomatik yenile (5 sn)
+  <label class="checkline">
+    <input type="checkbox" id="autoRefresh"> Otomatik yenile (5 sn)
+  </label>
+  <label class="checkline" title="Sadece görünümü filtreler; ham log ve veritabanı değişmez.">
+    <input type="checkbox" id="hideNoise"> Arka plan/teknik gürültüyü gizle
   </label>
   <span id="status"></span>
 </div>
 
-<div class="grid">
-  <div class="panel">
-    <h2>Kullanıcı Bazında Özet</h2>
-    <div id="summaryBox" class="empty">Yükleniyor...</div>
+<div class="stats">
+  <div class="stat-tile"><div class="n" id="statUsers">–</div><div class="l">Kullanıcı</div></div>
+  <div class="stat-tile"><div class="n" id="statVisits">–</div><div class="l">Toplam Ziyaret</div></div>
+  <div class="stat-tile"><div class="n" id="statDomains">–</div><div class="l">Farklı Domain</div></div>
+  <div class="stat-tile"><div class="n" id="statActiveSessions">–</div><div class="l">Aktif Oturum</div></div>
+  <div class="stat-tile"><div class="n" id="statUpdated">–</div><div class="l">Son Güncelleme</div></div>
+</div>
+
+<div class="panel" style="margin-bottom: 20px;">
+  <div class="panel-head">
+    <h2>Bağlı Kullanıcılar (Aktif Oturumlar)</h2>
   </div>
-  <div class="panel">
-    <h2>Son Ziyaretler (ham)</h2>
+  <div class="table-scroll">
     <table>
-      <thead><tr><th>Zaman</th><th>Kullanıcı</th><th>IP</th><th>Domain</th><th>Tip</th></tr></thead>
-      <tbody id="rawBody"></tbody>
+      <thead>
+        <tr><th>Kullanıcı</th><th>IP</th><th>MAC</th><th>Giriş</th><th>Kalan Süre</th><th></th></tr>
+      </thead>
+      <tbody id="sessionsBody"></tbody>
     </table>
   </div>
 </div>
 
+<div class="grid">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Kullanıcı Bazında Özet</h2>
+      <input class="mini-search" id="summarySearch" type="text" placeholder="Domain ara...">
+    </div>
+    <div id="summaryBox" class="empty">Yükleniyor...</div>
+  </div>
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Son Ziyaretler (ham)</h2>
+      <input class="mini-search" id="rawSearch" type="text" placeholder="Domain ara...">
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="sortable" data-key="timestamp">Zaman <span class="arrow">▾</span></th>
+            <th class="sortable" data-key="username">Kullanıcı <span class="arrow">▾</span></th>
+            <th>IP</th>
+            <th class="sortable" data-key="domain">Domain <span class="arrow">▾</span></th>
+            <th>Tip</th>
+          </tr>
+        </thead>
+        <tbody id="rawBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
 <script>
 let timer = null;
+let summaryData = {};
+let rawRows = [];
+let sessionsData = [];
+let rawSort = { key: 'timestamp', dir: 'desc' };
 
-function setStatus(msg, cls) {
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// Görünüm-katmanı gürültü filtresi: kullanıcının hiç "girmediği", cihaz/uygulamaların
+// arka planda otomatik attığı bilinen teknik DNS sorguları. Ham log (5651 kaydı) budan
+// etkilenmez — sadece "Arka plan/teknik gürültüyü gizle" açıkken panelde saklanır.
+// Bilinen tek tek servis isimleri (marka bazlı) — sabit liste olarak tükenmez, bu
+// yüzden aşağıdaki NOISE_LABELS ile (alt-alan adı etiketi bazlı, genel) birlikte kullanılıyor.
+const NOISE_SUBSTR = [
+  'connectivitycheck.gstatic.com', 'captive.samsungconnectivity.com', 'clients3.google.com',
+  'detectportal.firefox.com', 'msftconnecttest.com', 'msftncsi.com', 'nmcheck.gnome.org',
+  'mtalk.google.com', 'push.apple.com', 'fcm.googleapis.com',
+  'samsungosp.com', 'samsungcloud.com', 'samsungconsent.com', 'runestone.samsung.com',
+  'doh.opendns.com', 'dns.google', 'cloudflare-dns.com', 'crashlytics.com',
+  'app-measurement.com', 'safebrowsing.googleapis.com', 'clarity.ms',
+  'doubleclick.net', 'google-analytics.com', 'googleapis.com', 'gstatic.com',
+  'gvt1.com', 'gvt2.com',
+];
+
+// Alt-alan adı etiketlerinden herhangi biri bu kümede ise (örn. "api.samsungcloud.com",
+// "beacons.gcp.gvt2.com", "android.apis.google.com") arka plan/telemetri sayılır — marka
+// isminden bağımsız genel bir yakalama ağı.
+const NOISE_LABELS = new Set([
+  'api', 'apis', 'beacon', 'beacons', 'metrics', 'telemetry', 'analytics', 'consent',
+  'sync', 'push', 'log', 'logs', 'crash', 'crashlytics', 'update', 'ads', 'adservice',
+  'ping', 'stats', 'diagnostics', 'config', 'cds', 'fcm', 'gcm', 'measurement',
+]);
+
+function isNoiseDomain(domain) {
+  const d = domain.toLowerCase();
+  if (d.endsWith('.in-addr.arpa') || d.endsWith('.ip6.arpa')) return true;
+  if (NOISE_SUBSTR.some(p => d.includes(p))) return true;
+  return d.split('.').some(label => NOISE_LABELS.has(label));
+}
+
+function faviconUrl(domain) {
+  return 'https://www.google.com/s2/favicons?sz=32&domain=' + encodeURIComponent(domain);
+}
+
+function timeAgo(iso) {
+  const d = new Date(iso);
+  const diffSec = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  let label;
+  if (diffSec < 45) label = 'az önce';
+  else if (diffSec < 3600) label = Math.floor(diffSec / 60) + ' dk önce';
+  else if (diffSec < 86400) label = Math.floor(diffSec / 3600) + ' sa önce';
+  else label = d.toLocaleDateString('tr-TR');
+  return { label, isNew: diffSec < 60, title: d.toLocaleString('tr-TR') };
+}
+
+function setStatus(msg, cls, spinning) {
   const el = document.getElementById('status');
-  el.textContent = msg;
+  el.innerHTML = (spinning ? '<span class="spinner"></span>' : '') + esc(msg);
   el.className = cls || '';
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1400);
+}
+
+function copyDomain(domain) {
+  navigator.clipboard?.writeText(domain).then(() => showToast(domain + ' kopyalandı')).catch(() => {});
 }
 
 function getKey() {
@@ -108,54 +296,169 @@ async function fetchJson(url) {
   return res.json();
 }
 
-function renderSummary(data) {
+async function postJson(url) {
+  const res = await fetch(url, { method: 'POST', headers: { 'X-Admin-Key': getKey() } });
+  if (res.status === 403) throw new Error('Yönetici anahtarı hatalı.');
+  if (!res.ok) throw new Error('İstek başarısız (' + res.status + ')');
+  return res.json();
+}
+
+function formatDuration(seconds) {
+  if (seconds <= 0) return '—';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return h + 's ' + m + 'dk';
+  return m + ' dk';
+}
+
+async function kickSession(id, username) {
+  if (!confirm(username + ' kullanıcısını ağdan düşürmek istediğine emin misin?')) return;
+  try {
+    await postJson('/api/v1/admin/sessions/' + encodeURIComponent(id) + '/kick');
+    showToast(username + ' ağdan düşürüldü');
+    loadAll();
+  } catch (e) {
+    setStatus(e.message, 'err');
+  }
+}
+
+function updateStats() {
+  const users = Object.keys(summaryData);
+  const domains = new Set();
+  let totalVisits = 0;
+  users.forEach(u => summaryData[u].forEach(row => { domains.add(row.domain); totalVisits += row.visit_count; }));
+  document.getElementById('statUsers').textContent = users.length;
+  document.getElementById('statVisits').textContent = totalVisits;
+  document.getElementById('statDomains').textContent = domains.size;
+  document.getElementById('statActiveSessions').textContent = sessionsData.length;
+  document.getElementById('statUpdated').textContent = new Date().toLocaleTimeString('tr-TR');
+}
+
+function renderSessions() {
+  const body = document.getElementById('sessionsBody');
+  if (sessionsData.length === 0) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">Şu an ağa bağlı oturum yok.</td></tr>';
+    return;
+  }
+  body.innerHTML = sessionsData.map(s => `
+    <tr>
+      <td>${esc(s.username)}</td>
+      <td>${esc(s.ip)}</td>
+      <td>${esc(s.mac)}</td>
+      <td title="${esc(new Date(s.login_time).toLocaleString('tr-TR'))}">${esc(timeAgo(s.login_time).label)}</td>
+      <td>${esc(formatDuration(s.remaining_seconds))}</td>
+      <td><button class="danger" data-kick-id="${esc(s.id)}" data-kick-user="${esc(s.username)}">Bağlantıyı Kes</button></td>
+    </tr>`).join('');
+}
+
+function renderSummary() {
   const box = document.getElementById('summaryBox');
-  const usernames = Object.keys(data);
+  const search = document.getElementById('summarySearch').value.trim().toLowerCase();
+  const hideNoise = document.getElementById('hideNoise').checked;
+  const usernames = Object.keys(summaryData).sort((a, b) => {
+    const totalA = summaryData[a].reduce((s, r) => s + r.visit_count, 0);
+    const totalB = summaryData[b].reduce((s, r) => s + r.visit_count, 0);
+    return totalB - totalA;
+  });
+
   if (usernames.length === 0) {
     box.innerHTML = '<div class="empty">Henüz kayıtlı site ziyareti yok.</div>';
     return;
   }
-  box.innerHTML = usernames.map(u => `
-    <div class="user-block">
-      <h3>${u}</h3>
-      <table>
-        <thead><tr><th>Domain</th><th>Sayı</th><th>Son Ziyaret</th></tr></thead>
-        <tbody>
-          ${data[u].map(row => `
-            <tr>
-              <td>${row.domain}</td>
-              <td>${row.visit_count}</td>
-              <td>${new Date(row.last_visit).toLocaleString('tr-TR')}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>`).join('');
+
+  const blocks = usernames.map(u => {
+    let rows = summaryData[u].slice().sort((a, b) => b.visit_count - a.visit_count);
+    if (hideNoise) rows = rows.filter(r => !isNoiseDomain(r.domain));
+    if (search) rows = rows.filter(r => r.domain.toLowerCase().includes(search));
+    if (rows.length === 0) return '';
+    const total = summaryData[u].reduce((s, r) => s + r.visit_count, 0);
+    const maxCount = Math.max(...rows.map(r => r.visit_count));
+
+    const chips = rows.map(r => `
+      <span class="chip" data-domain="${esc(r.domain)}" title="Son ziyaret: ${esc(new Date(r.last_visit).toLocaleString('tr-TR'))}"
+            style="opacity:${(0.55 + 0.45 * (r.visit_count / maxCount)).toFixed(2)}">
+        <img class="favicon" src="${faviconUrl(r.domain)}" onerror="this.style.display='none'">
+        ${esc(r.domain)}
+        <span class="count">${r.visit_count}</span>
+      </span>`).join('');
+
+    const tableRows = rows.map(r => `
+      <tr>
+        <td class="domain-cell"><img class="favicon" src="${faviconUrl(r.domain)}" onerror="this.style.display='none'">${esc(r.domain)}</td>
+        <td>${r.visit_count}</td>
+        <td>${esc(new Date(r.last_visit).toLocaleString('tr-TR'))}</td>
+      </tr>`).join('');
+
+    return `
+      <div class="user-block" data-user="${esc(u)}">
+        <div class="user-block-head">
+          <h3>${esc(u)}</h3>
+          <span class="total">${total} ziyaret · ${rows.length} domain
+            <button class="toggle-link" type="button">tablo &#8646; bulut</button>
+          </span>
+        </div>
+        <div class="chip-cloud">${chips}</div>
+        <table>
+          <thead><tr><th>Domain</th><th>Sayı</th><th>Son Ziyaret</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+
+  box.innerHTML = blocks || '<div class="empty">Aramayla eşleşen domain yok.</div>';
 }
 
-function renderRaw(rows) {
+function renderRaw() {
   const body = document.getElementById('rawBody');
+  const search = document.getElementById('rawSearch').value.trim().toLowerCase();
+  const hideNoise = document.getElementById('hideNoise').checked;
+  let rows = rawRows.slice();
+  if (hideNoise) rows = rows.filter(r => !isNoiseDomain(r.domain));
+  if (search) rows = rows.filter(r => r.domain.toLowerCase().includes(search) || r.username.toLowerCase().includes(search));
+
+  rows.sort((a, b) => {
+    const va = a[rawSort.key], vb = b[rawSort.key];
+    const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+    return rawSort.dir === 'asc' ? cmp : -cmp;
+  });
+
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.classList.toggle('active', th.dataset.key === rawSort.key);
+    th.querySelector('.arrow').textContent = (th.dataset.key === rawSort.key && rawSort.dir === 'asc') ? '▴' : '▾';
+  });
+
   if (rows.length === 0) {
     body.innerHTML = '<tr><td colspan="5" class="empty">Kayıt yok.</td></tr>';
     return;
   }
-  body.innerHTML = rows.map(r => `
-    <tr>
-      <td>${new Date(r.timestamp).toLocaleString('tr-TR')}</td>
-      <td>${r.username}</td>
-      <td>${r.ip}</td>
-      <td>${r.domain}</td>
-      <td>${r.query_type}</td>
-    </tr>`).join('');
+  body.innerHTML = rows.map(r => {
+    const t = timeAgo(r.timestamp);
+    return `
+    <tr class="${t.isNew ? 'row-new' : ''}">
+      <td title="${esc(t.title)}">${esc(t.label)}</td>
+      <td>${esc(r.username)}</td>
+      <td>${esc(r.ip)}</td>
+      <td class="domain-cell"><img class="favicon" src="${faviconUrl(r.domain)}" onerror="this.style.display='none'">${esc(r.domain)}</td>
+      <td><span class="qtype ${esc(r.query_type)}">${esc(r.query_type)}</span></td>
+    </tr>`;
+  }).join('');
 }
 
 async function loadAll() {
   const filterUser = document.getElementById('filterUser').value.trim();
+  setStatus('Yükleniyor...', '', true);
   try {
-    const summary = await fetchJson('/api/v1/sitevisits/summary');
-    const rawUrl = '/api/v1/sitevisits?limit=100' + (filterUser ? '&username=' + encodeURIComponent(filterUser) : '');
-    const raw = await fetchJson(rawUrl);
-    renderSummary(summary);
-    renderRaw(raw);
+    const rawUrl = '/api/v1/sitevisits?limit=200' + (filterUser ? '&username=' + encodeURIComponent(filterUser) : '');
+    const [summary, raw, sessions] = await Promise.all([
+      fetchJson('/api/v1/sitevisits/summary'), fetchJson(rawUrl), fetchJson('/api/v1/admin/sessions'),
+    ]);
+    summaryData = summary;
+    rawRows = raw;
+    sessionsData = sessions;
+    updateStats();
+    renderSummary();
+    renderRaw();
+    renderSessions();
     setStatus('Son güncelleme: ' + new Date().toLocaleTimeString('tr-TR'), 'ok');
   } catch (e) {
     setStatus(e.message, 'err');
@@ -168,6 +471,32 @@ document.getElementById('autoRefresh').addEventListener('change', (e) => {
   } else if (timer) {
     clearInterval(timer);
   }
+});
+
+document.getElementById('summaryBox').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (chip) { copyDomain(chip.dataset.domain); return; }
+  if (e.target.closest('.toggle-link')) {
+    e.target.closest('.user-block')?.classList.toggle('expanded');
+  }
+});
+
+document.getElementById('sessionsBody').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-kick-id]');
+  if (btn) kickSession(btn.dataset.kickId, btn.dataset.kickUser);
+});
+
+document.getElementById('summarySearch').addEventListener('input', renderSummary);
+document.getElementById('rawSearch').addEventListener('input', renderRaw);
+document.getElementById('hideNoise').addEventListener('change', () => { renderSummary(); renderRaw(); });
+
+document.querySelectorAll('th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (rawSort.key === key) rawSort.dir = rawSort.dir === 'asc' ? 'desc' : 'asc';
+    else rawSort = { key, dir: 'asc' };
+    renderRaw();
+  });
 });
 
 window.addEventListener('DOMContentLoaded', () => {

@@ -494,6 +494,54 @@ def logout(request: Request, response: Response, db: DbSession = Depends(get_db)
     return {"status": "ok", "message": "Oturum sonlandırıldı."}
 
 
+@app.get("/api/v1/admin/sessions", dependencies=[Depends(require_admin)])
+def list_active_sessions(db: DbSession = Depends(get_db)):
+    """Şu anda ağa bağlı (aktif) oturumlar — admin panelinden manuel oturum sonlandırma (kick) içindir."""
+    sessions = (
+        db.query(models.SessionRecord)
+        .filter(models.SessionRecord.is_active.is_(True))
+        .order_by(models.SessionRecord.login_time.desc())
+        .all()
+    )
+    return [
+        {
+            "id": s.id,
+            "username": s.username,
+            "ip": s.ip_address,
+            "mac": s.mac_address,
+            "login_time": s.login_time.isoformat(),
+            "remaining_seconds": max(rdb.ttl(f"session:{s.session_token}"), 0),
+        }
+        for s in sessions
+    ]
+
+
+@app.post("/api/v1/admin/sessions/{session_id}/kick", dependencies=[Depends(require_admin)])
+def kick_session(session_id: int, db: DbSession = Depends(get_db)):
+    """Admin'in belirli bir kullanıcıyı ağdan düşürmesi: Redis oturumu silinir (portal artık
+    yetkisiz görür), DB'de kapatılır, ve nftables allow-set'ten IP çıkarılır (gerçek internet
+    erişimi anında kesilir — TTL dolmasını beklemez)."""
+    record = db.query(models.SessionRecord).filter(
+        models.SessionRecord.id == session_id,
+        models.SessionRecord.is_active.is_(True),
+    ).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Aktif oturum bulunamadı.")
+
+    rdb.delete(f"session:{record.session_token}")
+    record.is_active = False
+    record.logout_time = utcnow()
+    db.commit()
+
+    log_manager.write_log(
+        "KICK", record.ip_address, record.mac_address, record.username,
+        "Yonetici tarafindan oturum zorla sonlandirildi.",
+    )
+    nft_manager.revoke_client(record.ip_address)
+
+    return {"status": "ok", "message": f"{record.username} kullanıcısının oturumu sonlandırıldı."}
+
+
 # ----------------------------------------------------------------------------
 # 5651 loglama — dijital imza ve doğrulama
 # ----------------------------------------------------------------------------

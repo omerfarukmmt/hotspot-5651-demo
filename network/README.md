@@ -132,3 +132,27 @@ açık `iifname "docker0" accept` / `oifname "docker0" accept` kuralları
 eklendi. Bu makine hem hotspot kutusu hem geliştirme makinesi olarak
 kullanıldığı için bu istisna kalıcıdır; salt bir hotspot kutusunda (Docker
 kurulu değilse) zararsızdır, kaldırmaya gerek yoktur.
+
+### Ters yön: Docker'ın FORWARD zinciri bizim AP trafiğimizi düşürebilir
+
+Aynı sorunun tersi de yaşandı (2026-07-29): tablet portala giriş yapıp
+`allowed_clients`'a eklendiği, DNS'in de doğru çalıştığı halde hiçbir site
+açılmıyordu. Kök neden: Docker, kendi `iptables-nft` `filter` tablosunda
+`forward` hook'una kayıtlı **ayrı bir** `FORWARD` zinciri tutuyor ve bu
+zincirin de kendi `policy DROP`'u var — `DOCKER-USER`/`DOCKER-FORWARD` gibi
+alt zincirlerden geçmeyen (yani docker container'larıyla ilgisi olmayan)
+`ap0 <-> WAN` trafiğini, bizim `inet hotspot` tablomuz kabul etse bile ayrıca
+düşürüyor (`sudo iptables -L FORWARD -n -v` ile "policy DROP" ve yüksek paket
+sayısı görülerek teşhis edildi). Docker daemon her yeniden başladığında
+(reboot dahil) `DOCKER-USER` zincirini boş olarak yeniden oluşturuyor, önceki
+kurallar kalıcı değil.
+
+**Fix**: `DOCKER-USER` zincirine — Docker'ın asla otomatik dokunmadığı,
+kullanıcı kuralları için ayrılmış zincir — açık ACCEPT kuralları eklemek:
+```
+sudo iptables -I DOCKER-USER -i ap0 -o wlp0s20f3 -j ACCEPT
+sudo iptables -I DOCKER-USER -i wlp0s20f3 -o ap0 -j ACCEPT
+```
+Bu artık `setup-ap.sh`'a idempotent şekilde eklendi (her çalıştırmada
+`iptables -C` ile kontrol edip yoksa ekliyor), yani script her AP
+bring-up'ında bunu otomatik halleder — ayrıca elle çalıştırmaya gerek yok.

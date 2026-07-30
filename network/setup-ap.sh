@@ -42,6 +42,20 @@ echo "[setup-ap] nftables ruleset yükleniyor (varsayılan DROP + dinamik izin l
 sed -e "s/wlan0/${WAN_IF}/g" -e "s/wlan1/${LAN_IF}/g" -e "s/192\\.168\\.4\\.1/${AP_IP}/g" \
     "${PROJECT_PATH}/network/nftables.conf" | nft -f -
 
+# Docker, kendi iptables-nft "filter" tablosundaki FORWARD zincirine ayrı bir
+# policy DROP koyuyor (forward hook'unda bizim nftables tablomuzdan bağımsız
+# ikinci bir temel zincir) — bu, bizim tablomuz paketi kabul etse bile
+# ap0<->WAN trafiğini sessizce düşürüyor. Docker restart/reboot sonrası
+# DOCKER-USER zinciri boşalıyor, bu yüzden her setup-ap.sh çalışmasında
+# yeniden eklemek gerekiyor (idempotent: -C ile önce var mı bakılıyor).
+if command -v iptables >/dev/null && iptables -L DOCKER-USER -n >/dev/null 2>&1; then
+    echo "[setup-ap] Docker'ın DOCKER-USER zincirine ${LAN_IF}<->${WAN_IF} izin kuralları ekleniyor..."
+    iptables -C DOCKER-USER -i "${LAN_IF}" -o "${WAN_IF}" -j ACCEPT 2>/dev/null \
+        || iptables -I DOCKER-USER -i "${LAN_IF}" -o "${WAN_IF}" -j ACCEPT
+    iptables -C DOCKER-USER -i "${WAN_IF}" -o "${LAN_IF}" -j ACCEPT 2>/dev/null \
+        || iptables -I DOCKER-USER -i "${WAN_IF}" -o "${LAN_IF}" -j ACCEPT
+fi
+
 echo "[setup-ap] dnsmasq ve hostapd yeniden başlatılıyor..."
 systemctl restart dnsmasq
 systemctl restart hostapd
