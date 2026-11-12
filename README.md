@@ -1,187 +1,275 @@
 # 5651 Sayılı Kanun Uyumlu Hotspot (Captive Portal) ve Dijital İmzalı Loglama Sistemi
 
-Üniversite staj/bitirme projesi demo (MVP) — FastAPI + PostgreSQL + Redis + Nginx, tamamı Docker Compose ile ayağa kalkar.
+[![tests](https://github.com/omerfarukmmt/hotspot-5651-demo/actions/workflows/tests.yml/badge.svg)](https://github.com/omerfarukmmt/hotspot-5651-demo/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
+![Docker Compose](https://img.shields.io/badge/docker-compose-2496ED)
+
+Erzincan Binali Yıldırım Üniversitesi Bilgi İşlem Daire Başkanlığı'nda yapılan yaz stajı
+(Temmuz 2026) kapsamında geliştirilen, **5651 sayılı Kanun**'un toplu kullanım sağlayıcılara
+getirdiği kimlik doğrulama ve log saklama yükümlülüklerini gösteren bir hotspot demosu.
+
+Kullanıcı Wi-Fi'a bağlanır, captive portal'da **TC Kimlik No** veya **SMS OTP** ile giriş yapar,
+ancak ondan sonra internete çıkabilir. Her giriş, çıkış ve ziyaret edilen alan adı
+**RFC 5424** formatında loglanır; log dosyaları **SHA-256 + RSA-2048** ile imzalanıp
+**hash zinciriyle** arşivlenir, böylece sonradan yapılan en küçük değişiklik bile tespit edilir.
+
+> İki çalışma modu var: herhangi bir bilgisayarda çalışan **Docker demo modu** ve gerçek bir
+> Linux laptopta `hostapd` + `dnsmasq` + `nftables` ile **gerçek internet paylaşan hotspot modu**
+> (2026-07-24'te gerçek bir telefonla uçtan uca test edildi).
+
+## İçindekiler
+
+- [Özellikler](#özellikler)
+- [Mimari](#mimari)
+- [Proje yapısı](#proje-yapısı)
+- [Hızlı başlangıç (Docker demo)](#hızlı-başlangıç-docker-demo)
+- [Demo senaryosu](#demo-senaryosu)
+- [API uç noktaları](#api-uç-noktaları)
+- [Güvenlik](#güvenlik)
+- [Log imzalama, rotasyon ve hash zinciri](#log-imzalama-rotasyon-ve-hash-zinciri)
+- [Site ziyaret loglama (DNS tabanlı)](#site-ziyaret-loglama-dns-tabanlı)
+- [Gerçek hotspot kurulumu](#gerçek-hotspot-kurulumu-hostapd--dnsmasq--nftables)
+- [Testler](#testler)
+- [Yapılandırma](#yapılandırma)
+- [Bilinen sınırlar](#bilinen-sınırlar)
+
+## Özellikler
+
+- **Kimlik doğrulama:** Mock MERNİS (gerçek TC Kimlik No algoritması) ve SMS OTP (simülasyon, 3 dk geçerli)
+- **Oturum yönetimi:** Redis'te 2 saatlik TTL, PostgreSQL'de kalıcı kayıt; süresi dolan oturumlar otomatik kapatılır
+- **5651 loglama:** RFC 5424 (Syslog) formatı — LOGIN, LOGOUT, EXPIRE, KICK, AUTHFAIL, SMSOTP, SITEVISIT, TRAFFIC
+- **Dijital imza:** SHA-256 özet + RSA-2048 (PKCS#1 v1.5) imza, kurcalama tespiti
+- **Log rotasyonu + hash zinciri:** dönemsel arşivleme, append-only imza zinciri
+- **Site ziyaret takibi:** dnsmasq DNS sorguları aktif oturuma (kullanıcıya) bağlanır
+- **Yönetici paneli:** aktif oturumlar, kullanıcıyı ağdan düşürme (kick), kullanıcı bazlı ziyaret özeti
+- **Gerçek gatekeeping:** nftables varsayılan DROP; giriş yapan istemcinin IP'si dinamik allow-set'e eklenir
+- **Sertleştirme:** rate limiting, OTP kilitleme, yönetici anahtarı, backend'in sadece nginx arkasında erişilebilir olması
 
 ## Mimari
 
 ```
-Kullanıcı ──► Nginx (:8080)
-              ├── /portal/*  → Captive Portal (index.html, status.html)
-              ├── /api/*     → FastAPI backend (:8000)
-              └── /*         → auth_request ile oturum kontrolü
-                               ├── oturum VAR  → simüle "internet" sayfası (+ TRAFFIC logu)
-                               └── oturum YOK  → 302 /portal/index.html
+İstemci ──► Nginx (:8080 demo / :80 hotspot)
+            ├── /portal/*  → Captive Portal (index.html, status.html, admin.html)
+            ├── /api/*     → FastAPI backend (yalnızca 127.0.0.1:8000)
+            └── /*         → auth_request ile oturum kontrolü
+                             ├── oturum VAR  → simüle "internet" sayfası (+ TRAFFIC logu)
+                             └── oturum YOK  → 302 /portal/index.html
 
-FastAPI ──► PostgreSQL (users, sessions)  — kalıcı kayıt
-        ──► Redis (session:* 7200 sn TTL, otp:* 180 sn TTL)
-        ──► logs/dhcp_activity.log        — RFC 5424 (Syslog) formatı
-        ──► logs/dhcp_activity.log.signed — SHA-256 + RSA-2048 dijital imza
+FastAPI ──► PostgreSQL   users, sessions, site_visits
+        ──► Redis        session:* (7200 sn), otp:* (180 sn), rate limit sayaçları
+        ──► logs/        dhcp_activity.log (RFC 5424), .signed, chain.jsonl, archive/
+        ──► nftables     allowed_clients set'i (sadece hotspot modunda)
+        ◄── dnsmasq      DNS sorgu logu → site ziyaretleri
 ```
 
-## Çalıştırma
+Hotspot modunda ağ tarafı (`WAN_IF` = telefon hotspot'una bağlı Wi-Fi, `LAN_IF` = kendi AP'miz)
+için ayrıntılı şema [`network/README.md`](network/README.md)'de.
 
-İlk çalıştırmadan önce `.env.example`'ı `.env` olarak kopyalayıp `ADMIN_API_KEY`'i
-kendi değerinizle değiştirin (`.env` `.gitignore`'da, git'e girmez):
+## Proje yapısı
+
+```
+backend/
+  main.py              FastAPI uygulaması: kimlik doğrulama, oturum, admin, log uçları, arka plan görevleri
+  log_manager.py       RFC 5424 loglama, RSA imzalama/doğrulama, rotasyon + hash zinciri
+  nft_manager.py       nftables allow-set'ine IP ekleme/silme (ENABLE_NFTABLES=false iken no-op)
+  dns_log_watcher.py   dnsmasq sorgu logunu tail -f gibi izler ve ayrıştırır
+  models.py, schemas.py, database.py
+  tests/               pytest testleri (Docker gerektirmez)
+frontend/              index.html (portal), status.html (oturum), admin.html (yönetici paneli)
+nginx/                 nginx.conf (demo), nginx.host.conf (hotspot modu)
+network/               hostapd/dnsmasq/nftables yapılandırmaları + setup-ap.sh
+docker-compose.yml       Demo modu
+docker-compose.host.yml  Hotspot modu override'ı (host network + NET_ADMIN)
+PROGRESS.md              Geliştirme günlüğü: alınan kararlar ve nedenleri
+staj-defteri-kanitlari.md  Gerçek donanımda alınan komut çıktıları (staj defteri için)
+```
+
+## Hızlı başlangıç (Docker demo)
+
+Gereksinim: Docker + Docker Compose. Önce yönetici anahtarını ayarlayın (`.env` git'e girmez):
 
 ```bash
 cp .env.example .env
 ```
 
+`.env` içindeki `ADMIN_API_KEY` değerini rastgele bir değerle değiştirin, ardından:
+
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
-Ardından tarayıcıda: **http://localhost:8080** → oturum olmadığı için otomatik olarak Captive Portal'a (`/portal/index.html`) yönlendirilirsiniz.
+| Adres | Açıklama |
+|---|---|
+| http://localhost:8080 | Oturum yoksa otomatik olarak captive portal'a yönlendirir |
+| http://localhost:8080/portal/admin.html | Yönetici paneli (`ADMIN_API_KEY` ister) |
+| http://localhost:8000/docs | Swagger arayüzü (yalnızca bu makineden erişilebilir) |
 
-## Demo Senaryosu
+## Demo senaryosu
 
 1. **TC Kimlik ile giriş:** Ad/Soyad serbest, Doğum Yılı örn. `1995`, TC No: **`10000000146`**
-   (Mock MERNİS gerçek TC algoritmasını doğrular: 11 hane + 10. ve 11. hane checksum kontrolü.)
+   (Mock MERNİS gerçek algoritmayı doğrular: 11 hane, ilk hane ≠ 0, 10. ve 11. hane checksum).
 2. **SMS ile giriş:** Herhangi bir 10 haneli numara girin; üretilen OTP hem ekranda hem backend
-   loglarında (`docker logs hotspot-backend` → `[SMS-SIMULATOR] SMS Gönderildi: XXXXXX`) görünür. 3 dk TTL.
-3. Girişte oturum Redis'e **7200 sn (2 saat) TTL** ile yazılır; `status.html` geri sayımı gösterir.
-4. **http://localhost:8080/** artık "internet" simülasyon sayfasını açar ve her ziyaret TRAFFIC logu üretir.
-5. **Log imzalama:** `curl -X POST http://localhost:8080/api/v1/log/sign`
-   → `logs/dhcp_activity.log.signed` üretilir (SHA-256 özet + RSA imza + public key).
-6. **Doğrulama:** `curl http://localhost:8080/api/v1/log/verify` → `"valid": true`
-7. **Kurcalama kanıtı:** `logs/dhcp_activity.log` içinde tek bir karakter değiştirin,
-   verify tekrar çağrıldığında `"valid": false` döner.
-
-## API Uç Noktaları
-
-| Metot | Yol | Açıklama |
-|---|---|---|
-| POST | `/api/v1/auth/tc` | Mock MERNİS ile TC kimlik doğrulama + oturum |
-| POST | `/api/v1/auth/sms/request` | OTP üret (Redis, 180 sn) |
-| POST | `/api/v1/auth/sms/verify` | OTP doğrula + oturum |
-| GET | `/api/v1/auth/check` | Nginx auth_request kontrol ucu (200/401) |
-| GET | `/api/v1/session/status` | Kalan TTL, IP, MAC, kullanıcı |
-| POST | `/api/v1/logout` | Oturumu kapat (LOGOUT logu) |
-| POST | `/api/v1/log/sign` | Aktif logun SHA-256 özetini RSA ile imzala (dosyayı taşımaz) |
-| GET | `/api/v1/log/verify` | Aktif log için imza bütünlük doğrulaması |
-| POST | `/api/v1/log/rotate` | *(admin)* Aktif logu imzalayıp arşive taşır, zincire ekler |
-| GET | `/api/v1/log/chain` | *(admin)* Tüm rotasyon/imza zincirini doğrulayıp döndürür |
-| GET | `/api/v1/sitevisits` | *(admin)* Ham site ziyaret listesi (`?username=`, `?domain=`) |
-| GET | `/api/v1/sitevisits/summary` | *(admin)* Kullanıcı → ziyaret edilen domainler özeti |
-| GET | `/api/v1/health` | Sağlık kontrolü |
-
-*(admin)* işaretli uçlar `X-Admin-Key` header'ı ister (bkz. aşağıdaki bölüm).
-
-## Güvenlik sertleştirmeleri
-
-**Rate limiting (Redis sabit-pencere sayaç, `main.py _rate_limit`):**
-- `/api/v1/auth/tc`: IP başına 5 dakikada en fazla 10 deneme (`RATE_LIMIT_LOGIN_MAX` / `_WINDOW_SECONDS`).
-- `/api/v1/auth/sms/request`: hem telefon hem IP başına 10 dakikada en fazla 3 istek
-  (`RATE_LIMIT_SMS_REQUEST_MAX` / `_WINDOW_SECONDS`) — SMS bombalamayı önler.
-- Limit aşılınca `429 Too Many Requests` + kalan bekleme süresi dönülür.
-
-**OTP kilitleme (`main.py sms_verify`):**
-- Bir telefon numarası için art arda `OTP_MAX_ATTEMPTS` (varsayılan 5) yanlış kod girilirse,
-  mevcut kod iptal edilir ve numara `OTP_LOCKOUT_SECONDS` (varsayılan 900 sn / 15 dk) boyunca
-  hem yeni kod isteyemez hem de doğrulama yapamaz. Kilitlenme AUTHFAIL olarak imzalı loga da yazılır.
-- Yeni bir OTP başarıyla istendiğinde başarısız deneme sayacı sıfırlanır.
-
-Tüm eşikler docker-compose.yml üzerinden ortam değişkeni olarak ayarlanabilir.
-
-## Log imza zinciri ve rotasyon
-
-`sign_log_file`/`verify_log_file` yalnızca **o an aktif olan** `dhcp_activity.log`'u
-imzalar/doğrular; her yeniden imzalamada `.signed` dosyasının üzerine yazılır, yani
-önceki dönemin imzası kaybolur ve dosya sınırsız büyür.
-
-Bunu tamamlayan **rotasyon + imza zinciri** katmanı (`log_manager.rotate_and_seal_log` /
-`verify_chain`):
-- Aktif logu SHA-256 + RSA ile imzalar, `logs/archive/dhcp_activity-<zaman damgası>.log`
-  olarak arşivler ve imza kaydını `logs/dhcp_activity.chain.jsonl`e **ekler** (append-only,
-  önceki kayıtlar asla üzerine yazılmaz).
-- Her kayıt bir önceki kaydın `link_hash`'ini içerir (blockchain-stili hash zinciri):
-  geçmişteki bir dönem silinir/değiştirilir/sıralaması bozulursa zincir o noktadan
-  itibaren doğrulamada geçersiz çıkar.
-- Varsayılan olarak günde bir kez arka planda otomatik çalışır (`LOG_ROTATE_INTERVAL_SECONDS`,
-  varsayılan 86400 sn); `POST /api/v1/log/rotate` ile manuel de tetiklenebilir (admin yetkisi ister).
-- `GET /api/v1/log/chain` tüm zinciri uçtan uca doğrulayıp her dönem için
-  `chain_intact` / `signature_valid` / `archive_file_matches` durumlarını döner.
-
-**Bilinen sınır:** hash zinciri kendi içinde tutarlı yeniden hesaplanabilir (SHA-256 açık bir
-algoritma, gizli anahtar gerektirmez); asıl bütünlük garantisi her kaydın RSA imzasından gelir
-— imzalı bir dönemin içeriğini özel anahtar olmadan değiştirmek mümkün değildir. Zincirin
-tamamının (ör. bir dönemin sessizce silinmesi) dışarıdan bağımsız doğrulanabilmesi için gerçek
-sistemde `link_hash`'in periyodik olarak harici, güvenilir bir zaman damgası otoritesine
-(TÜBİTAK/BTK onaylı TSA) bildirilmesi gerekir — bu demo kapsamının dışındadır.
-
-Swagger arayüzü: http://localhost:8000/docs
-
-## Site Ziyaret Loglama (DNS tabanlı)
-
-HTTPS trafiğinin içeriği şifreli olduğu için (ve MITM ile araya girmek gerçek
-kullanıcı cihazlarında pratik değil), hangi kullanıcının hangi siteye gittiğini
-görmenin gerçekçi yolu **DNS sorgularını loglamaktır** — 5651 kapsamındaki
-ticari çözümlerin çoğu da bu yaklaşımı kullanır.
-
-**Nasıl çalışır:**
-1. Gerçek ağ kurulumunda (bkz. yukarıdaki mimari) tüm istemcilerin DNS'i
-   `dnsmasq` üzerinden çözülür. `dnsmasq.conf` içine şunlar eklenir:
+   logunda (`docker logs hotspot-backend` → `[SMS-SIMULATOR] SMS Gönderildi: XXXXXX`) görünür.
+3. Oturum Redis'e **7200 sn (2 saat) TTL** ile yazılır; `status.html` geri sayımı gösterir.
+4. **http://localhost:8080/** artık "internet" simülasyon sayfasını açar; her ziyaret TRAFFIC logu üretir.
+5. **Log imzalama** (yönetici yetkisi ister):
+   ```bash
+   curl -X POST -H "X-Admin-Key: $ADMIN_API_KEY" http://localhost:8080/api/v1/log/sign
    ```
-   log-queries
-   log-facility=/tam/yol/hotspot-5651-demo/logs/dnsmasq_query.log
+6. **Doğrulama:**
+   ```bash
+   curl http://localhost:8080/api/v1/log/verify
    ```
-   (Bu dosya, backend konteynerine zaten `./logs:/app/logs` ile bağlı olan
-   dizinin içinde olmalı ki backend okuyabilsin.)
-2. Backend, bu log dosyasını arka planda (`_dns_log_tailer`, `main.py`) sürekli
-   izler; her `query[TİP] domain from IP` satırını o anda o IP'ye sahip
-   **aktif oturuma** (dolayısıyla kullanıcıya) bağlar.
-3. Her eşleşme hem imzalı 5651 loguna (`SITEVISIT` mesaj tipi) hem de
-   sorgulanabilir `site_visits` tablosuna yazılır.
-4. **Yönetici paneli:** `http://localhost:8080/portal/admin.html` —
-   kullanıcı bazında ziyaret edilen domainler ve ham liste burada canlı olarak
-   görülür (5 sn'de bir otomatik yenilenebilir; staj komisyonu demosu için
-   uygundur).
+   → `"valid": true`
+7. **Kurcalama kanıtı:** `logs/dhcp_activity.log` içinde tek bir karakter değiştirin; verify
+   tekrar çağrıldığında `"valid": false` döner.
 
-**Önemli notlar:**
-- Panel `X-Admin-Key` ile korunur; anahtar `docker-compose.yml` içindeki
-  `ADMIN_API_KEY` değişkeninden gelir (varsayılan `changeme-admin-key`,
-  **gerçek/canlı demo öncesi mutlaka değiştirin**).
-- `/portal/` dizini captive-portal auth kontrolünden muaf olduğu için
-  `admin.html` sayfası herkes tarafından *açılabilir*, ancak anahtar
-  olmadan veri döndürmez. Gerçek üretim ortamında bu sayfayı ayrı bir
-  yönetici ağına/VLAN'a taşımak veya nginx üzerinde ek erişim kısıtı
-  eklemek gerekir (KVKK: gezinme geçmişi kişisel veridir).
-- Docker demo ortamında henüz gerçek bir `dnsmasq` çalışmadığı için bu
-  akışı test etmek üzere `logs/dnsmasq_query.log` dosyasına elle
-  `query[A] example.com from 192.168.4.50` formatında bir satır eklemeniz
-  yeterlidir; tailer bunu birkaç saniye içinde işler.
+## API uç noktaları
 
-## Gerçek Ağ Kurulumu (hostapd + dnsmasq + nftables)
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| POST | `/api/v1/auth/tc` | — | Mock MERNİS ile TC kimlik doğrulama + oturum |
+| POST | `/api/v1/auth/sms/request` | — | OTP üret (Redis, 180 sn) |
+| POST | `/api/v1/auth/sms/verify` | — | OTP doğrula + oturum |
+| GET | `/api/v1/auth/check` | — | Nginx `auth_request` kontrol ucu (200/401) |
+| GET | `/api/v1/session/status` | oturum | Kalan süre, IP, MAC, kullanıcı |
+| POST | `/api/v1/logout` | oturum | Oturumu kapat (LOGOUT logu) |
+| GET | `/api/v1/log/verify` | — | Aktif logun imza bütünlüğünü doğrula |
+| POST | `/api/v1/log/sign` | admin | Aktif logun SHA-256 özetini RSA ile imzala |
+| POST | `/api/v1/log/rotate` | admin | Aktif logu imzalayıp arşive taşı, zincire ekle |
+| GET | `/api/v1/log/chain` | admin | Tüm rotasyon/imza zincirini doğrula |
+| GET | `/api/v1/admin/sessions` | admin | Aktif oturumlar |
+| POST | `/api/v1/admin/sessions/{id}/kick` | admin | Kullanıcıyı ağdan düşür (nftables'tan anında çıkarır) |
+| GET | `/api/v1/sitevisits` | admin | Ham ziyaret listesi (`?username=`, `?domain=`, `?limit=`) |
+| GET | `/api/v1/sitevisits/summary` | admin | Kullanıcı → ziyaret edilen alan adları özeti |
+| GET | `/api/v1/health` | — | Sağlık kontrolü |
 
-Docker Compose demosu, girişi kontrol eder ama gerçek ağ trafiğini kesmez
-(Nginx `auth_request` sadece reverse-proxy seviyesinde çalışır). Gerçek bir
-hotspot'a dönüştürmek için `network/` dizinindeki hostapd/dnsmasq/nftables
-konfigürasyonlarına ve `network/setup-ap.sh` kurulum betiğine bakın —
-ayrıntılı mimari, adımlar ve bilinen kırılganlıklar `network/README.md`'de.
+*admin* uçları `X-Admin-Key` header'ı ister.
 
-Özetle: backend artık login/logout/expire anlarında gerçek `nft` komutlarını
-tetikleyip (`backend/nft_manager.py`) istemcinin IP'sini bir allow-set'e
-ekliyor/siliyor; `network/nftables.conf`'taki forward zinciri varsayılan DROP
-olduğu için oturumu olmayan bir cihaz artık hiçbir yere çıkamıyor. Bu davranış
-`ENABLE_NFTABLES=true` olmadan **devre dışıdır** (Docker demo ortamındaki
-varsayılan `docker-compose.yml` bunu `false` bırakır).
+## Güvenlik
 
-**2026-07-24'te gerçek donanımda uçtan uca test edildi** (USB adaptör
-olmadan, laptopun tek dahili Wi-Fi kartıyla): gerçek bir telefon SSID'ye
-bağlandı, captive portal + TC/OTP girişi + gerçek nftables gatekeeping +
-gerçek internet erişimi doğrulandı. Bu mod için ana `docker-compose.yml`
-**değiştirilmedi** — ayrı bir override dosyası olan `docker-compose.host.yml`
-backend'i (ve nginx'i) `--network host` + backend'e `--cap-add=NET_ADMIN` ile
-ayağa kaldırır:
+**Rate limiting** (Redis sabit pencereli sayaç, `main.py _rate_limit`):
+- `/auth/tc`: IP başına 5 dakikada en fazla 10 deneme.
+- `/auth/sms/request`: hem telefon hem IP başına 10 dakikada en fazla 3 istek (SMS bombalamaya karşı).
+- Limit aşılınca `429 Too Many Requests` + kalan bekleme süresi.
+
+**OTP kilitleme:** Bir numara için art arda 5 yanlış kod girilirse kod iptal edilir ve numara
+15 dakika boyunca hem kod isteyemez hem doğrulama yapamaz. Kilitlenme AUTHFAIL olarak loglanır.
+
+**Backend'e doğrudan erişim kapalı:** Backend istemci IP'sini nginx'in gönderdiği `X-Real-IP`
+header'ından okur. Bu header'a güvenilebilmesi için backend portu yalnızca `127.0.0.1`'e açılır
+(demo modunda port eşlemesi, hotspot modunda uvicorn'un loopback'e bağlanması). Aksi halde bir
+istemci header'ı kendisi gönderip rate limit'i atlatabilir veya başka bir IP adına erişim açtırabilirdi.
+
+**İmza doğrulama sunucunun anahtarıyla yapılır:** `.signed` dosyası ve zincir kayıtları public key'i
+bilgi amaçlı taşır, ancak doğrulamada her zaman sunucunun kendi anahtarı kullanılır. Böylece logu
+değiştirip kendi anahtarıyla yeniden imzalayan biri doğrulamayı geçemez. İmzalama ucu da bu yüzden
+yönetici yetkisi ister.
+
+**Aynı IP'de birden fazla oturum:** Bir cihaz cookie'sini kaybedip yeniden giriş yaparsa, eski
+oturumun kapanması yeni oturumun internet erişimini kesmez; IP ancak o IP'ye ait aktif oturum
+kalmadığında allow-set'ten çıkarılır.
+
+Tüm eşikler `docker-compose.yml` üzerinden ortam değişkeniyle ayarlanabilir (bkz. [Yapılandırma](#yapılandırma)).
+
+## Log imzalama, rotasyon ve hash zinciri
+
+`/log/sign` ve `/log/verify` yalnızca **o an aktif olan** `dhcp_activity.log`'u imzalar/doğrular;
+her imzalamada `.signed` dosyasının üzerine yazılır. Uzun süreli saklama için bunun üstüne
+**rotasyon + imza zinciri** katmanı var (`log_manager.rotate_and_seal_log` / `verify_chain`):
+
+- Aktif log imzalanır, `logs/archive/dhcp_activity-<zaman damgası>.log` olarak arşivlenir ve imza
+  kaydı `logs/dhcp_activity.chain.jsonl` dosyasına **eklenir** (append-only).
+- Her kayıt bir önceki kaydın `link_hash`'ini içerir: geçmişteki bir dönem silinir, değiştirilir
+  veya sırası bozulursa zincir o noktadan itibaren geçersiz çıkar.
+- Arşiv dosyasının diskten **kaybolması** da ihlal sayılır (5651 logların saklanmasını zorunlu kılar).
+- Varsayılan olarak günde bir kez otomatik çalışır (`LOG_ROTATE_INTERVAL_SECONDS`);
+  `POST /api/v1/log/rotate` ile manuel de tetiklenebilir.
+- `GET /api/v1/log/chain` her dönem için `chain_intact`, `signature_valid`, `archive_file_present`,
+  `archive_file_matches` durumlarını döner.
+
+## Site ziyaret loglama (DNS tabanlı)
+
+HTTPS içeriği şifreli olduğundan, hangi kullanıcının hangi siteye gittiğini görmenin gerçekçi yolu
+**DNS sorgularını loglamaktır**; 5651 kapsamındaki ticari çözümlerin çoğu da bunu yapar.
+
+1. Tüm istemcilerin DNS'i `dnsmasq` üzerinden çözülür (`log-queries` açık, log dosyası `logs/` altında).
+2. Backend bu dosyayı arka planda izler (`_dns_log_tailer`), her `query[TİP] alan-adı from IP`
+   satırını o IP'nin **aktif oturumuna** bağlar. Eşleşmeyen IP'ler `(kimliksiz)` olarak işaretlenir.
+3. Her eşleşme hem imzalı loga (SITEVISIT) hem `site_visits` tablosuna yazılır.
+4. Sonuçlar yönetici panelinde (`/portal/admin.html`) canlı izlenebilir.
+
+Docker demosunda gerçek dnsmasq olmadığı için `logs/dnsmasq_query.log` dosyasına elle
+`query[A] example.com from 192.168.4.50` biçiminde bir satır eklemek yeterlidir.
+
+## Gerçek hotspot kurulumu (hostapd + dnsmasq + nftables)
+
+Docker demosu girişi kontrol eder ama gerçek ağ trafiğini kesmez. Gerçek hotspot modunda:
+
+- `hostapd` kendi SSID'ini yayınlar, `dnsmasq` DHCP + DNS sağlar.
+- `nftables` forward zinciri varsayılan **DROP**; backend giriş/çıkış/süre dolumu anlarında
+  istemci IP'sini `allowed_clients` set'ine ekler/siler (`backend/nft_manager.py`).
+- Harici USB adaptör gerekmez: laptopun tek dahili Wi-Fi kartı (Intel AX201) concurrent AP+STA ile
+  hem WAN hem AP olarak kullanıldı.
+
+```bash
+sudo WAN_IF=wlp0s20f3 LAN_IF=ap0 ./network/setup-ap.sh
+```
 
 ```bash
 sudo docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
 ```
 
-## Notlar
+Adım adım kurulum, NetworkManager ayarı, kanal eşleştirme ve bilinen kırılganlıklar için
+[`network/README.md`](network/README.md); kararların gerekçeleri için [`PROGRESS.md`](PROGRESS.md).
 
-- MAC adresi: `DNSMASQ_LEASES_FILE` tanımlıysa gerçek dnsmasq lease dosyasından
-  okunur (`backend/main.py get_real_mac`); tanımlı değilse (Docker demo
-  varsayılanı) IP'den deterministik türetilir (`02:00:AA:BB:CC:DD`).
-- RSA özel anahtarı (`logs/signing_key.pem`) ilk açılışta otomatik üretilir; gerçek sistemde HSM/KMS ve BTK onaylı zaman damgası kullanılır.
-- Redis TTL'i dolan oturumlar arka plan görevi ile PostgreSQL'de `is_active=false` yapılır ve EXPIRE logu yazılır; log imzalama ayrıca günde bir otomatik tetiklenir.
+## Testler
+
+Testler Docker, PostgreSQL veya Redis gerektirmez; her push'ta GitHub Actions'ta da çalışır.
+
+```bash
+cd backend
+```
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+```
+
+```bash
+python -m pytest -q
+```
+
+Kapsanan senaryolar: TC Kimlik algoritması, RFC 5424 satır formatı, imzala/doğrula, tek karakterlik
+kurcalama, **sahte anahtarla yeniden imzalama**, arşiv dosyası değişikliği/silinmesi, zincirden kayıt silinmesi.
+
+## Yapılandırma
+
+| Değişken | Varsayılan | Açıklama |
+|---|---|---|
+| `ADMIN_API_KEY` | — (zorunlu, `.env`) | Yönetici uçları ve paneli için anahtar |
+| `SESSION_TTL_SECONDS` | `7200` | Oturum süresi |
+| `OTP_TTL_SECONDS` | `180` | OTP geçerlilik süresi |
+| `RATE_LIMIT_LOGIN_MAX` / `_WINDOW_SECONDS` | `10` / `300` | TC giriş denemesi sınırı |
+| `RATE_LIMIT_SMS_REQUEST_MAX` / `_WINDOW_SECONDS` | `3` / `600` | SMS isteği sınırı |
+| `OTP_MAX_ATTEMPTS` / `OTP_LOCKOUT_SECONDS` | `5` / `900` | OTP kilitleme |
+| `LOG_ROTATE_INTERVAL_SECONDS` | `86400` | Otomatik log rotasyonu aralığı |
+| `ENABLE_NFTABLES` | `false` | Gerçek nftables gatekeeping (hotspot modunda `true`) |
+| `DNSMASQ_LEASES_FILE` | boş | Gerçek MAC adresi için dnsmasq lease dosyası |
+| `DNSMASQ_LOG_FILE` | `/app/logs/dnsmasq_query.log` | DNS sorgu logu |
+
+## Bilinen sınırlar
+
+Bu bir staj demosudur; üretim ortamı için şunlar gerekir:
+
+- **MERNİS ve SMS simülasyondur.** Gerçek kurulumda KPSPublic servisi ve bir SMS sağlayıcısı kullanılır;
+  `demo_otp` alanı yanıttan kaldırılmalıdır.
+- **İmza anahtarı diskte (`logs/signing_key.pem`) durur.** Gerçek sistemde HSM/KMS ve BTK/TÜBİTAK
+  onaylı zaman damgası (TSA) kullanılır. Hash zinciri tek başına anahtarsız yeniden hesaplanabilir;
+  zincirin bütününün bağımsız doğrulanması için `link_hash`'in düzenli olarak harici bir TSA'ya
+  bildirilmesi gerekir.
+- **KVKK:** TC Kimlik No ve gezinme geçmişi kişisel veridir. Yönetici paneli ayrı bir yönetim
+  ağına/VLAN'a taşınmalı, veritabanındaki kimlik bilgileri şifrelenmeli ve saklama süresi politikası uygulanmalıdır.
+- **Gatekeeping IP bazlıdır.** DHCP lease'i başka bir cihaza geçerse eski izin teorik olarak miras kalabilir;
+  lease süresinin oturum süresiyle hizalanması önerilir.
+- PostgreSQL parolası `docker-compose.yml` içinde sabittir; gerçek kurulumda `.env`'e taşınmalıdır.

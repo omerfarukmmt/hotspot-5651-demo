@@ -150,6 +150,27 @@ Yol boyunca çıkan ve düzeltilen yan etkiler (ayrıntılar aşağıdaki
   arşivlenen dosyada tek karakter değiştirilince `archive_file_matches: false`
   ile bozulmanın doğru tespit edildiği doğrulandı.
 
+### 6. Kod incelemesi + güvenlik düzeltmeleri (2026-11-12)
+- **İmza doğrulama artık sunucunun kendi anahtarıyla yapılıyor** (`log_manager.py`).
+  Önceden `verify_log_file`/`verify_chain`, `.signed`/zincir kaydının İÇİNDEKİ
+  public key'e güveniyordu: logu değiştirip kendi RSA anahtarıyla yeniden imzalayan
+  biri `valid: true` alabiliyordu. `.signed`'a `key_fingerprint_sha256`, verify
+  yanıtına `key_matches_server` eklendi.
+- **`POST /api/v1/log/sign` admin yetkisi istiyor** — açık olduğunda, logu
+  değiştiren biri hemen ardından bu ucu çağırıp değişikliği geçerli imzayla örtebiliyordu.
+- **Backend portu sadece 127.0.0.1**: `docker-compose.yml`'de `127.0.0.1:8000:8000`,
+  host modunda uvicorn `--host 127.0.0.1`. Önceden host modunda AP istemcileri
+  `192.168.4.1:8000`'e doğrudan gidip sahte `X-Real-IP` gönderebiliyordu
+  (rate limit atlatma, başka IP adına allow-set'e ekleme).
+- **Aynı IP'de iki aktif oturum**: eski oturumun logout/expire/kick'i yeni oturumun
+  internetini de kesiyordu. `_release_ip_if_unused()` IP'yi ancak o IP'de başka aktif
+  oturum kalmadığında nftables'tan çıkarıyor.
+- Zincirde arşiv dosyasının diskten silinmesi artık ihlal sayılıyor (önceden geçerli görünüyordu).
+- OTP karşılaştırması `secrets.compare_digest` ile; `birth_year` şemasındaki sabit
+  `le=2026` üst sınırı kaldırıldı (2027'de geçerli girişleri reddedecekti).
+- `backend/tests/` (pytest, Docker gerektirmez) + GitHub Actions (`.github/workflows/tests.yml`).
+- README baştan düzenlendi (içindekiler, proje yapısı, yapılandırma tablosu, bilinen sınırlar).
+
 ## Laptop üzerinde harici Wi-Fi adaptörsüz AP denemesi (2026-07-22 → 2026-07-24, TAMAMLANDI)
 
 Amaç: `network/` dizinindeki gerçek hotspot planı (bkz. yukarıdaki 2. bölüm)
