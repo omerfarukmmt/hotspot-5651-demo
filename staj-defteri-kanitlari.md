@@ -4,6 +4,10 @@ Bu dosya Claude Code tarafından gerçek laptop üzerinde çalıştırılan komu
 ham çıktılarıdır. Ekran görüntüsü almak veya kopyala-yapıştır yapmak için
 kullanabilirsin.
 
+> Gizlilik: telefon numarası, donanım MAC adresleri, WAN IP ve ev dizini yolu
+> maskelenmiştir (`5XXXXXXXXX`, `XX`, `<kullanici>`). `02:00:...` ile başlayan MAC
+> adresleri gerçek değil, backend'in IP'den türettiği demo değerleridir.
+
 ---
 
 ## 1. AP Kurulumu Kanıtı (Şekil 14/16)
