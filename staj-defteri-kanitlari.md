@@ -4,6 +4,10 @@ Bu dosya Claude Code tarafından gerçek laptop üzerinde çalıştırılan komu
 ham çıktılarıdır. Ekran görüntüsü almak veya kopyala-yapıştır yapmak için
 kullanabilirsin.
 
+> Gizlilik: telefon numarası, donanım MAC adresleri, WAN IP ve ev dizini yolu
+> maskelenmiştir (`5XXXXXXXXX`, `XX`, `<kullanici>`). `02:00:...` ile başlayan MAC
+> adresleri gerçek değil, backend'in IP'den türettiği demo değerleridir.
+
 ---
 
 ## 1. AP Kurulumu Kanıtı (Şekil 14/16)
@@ -20,17 +24,17 @@ valid interface combinations:
 ### `ip addr show` — WAN (wlp0s20f3) ve ap0 aynı anda UP + IP'li
 ```
 3: wlp0s20f3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 ... state UP
-    link/ether c4:bd:e5:f9:b2:26 brd ff:ff:ff:ff:ff:ff
-    inet 10.102.237.55/24 brd 10.102.237.255 scope global dynamic noprefixroute wlp0s20f3
+    link/ether c4:bd:e5:XX:XX:26 brd ff:ff:ff:ff:ff:ff
+    inet 10.x.x.55/24 brd 10.x.x.255 scope global dynamic noprefixroute wlp0s20f3
 
 8: ap0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 ... state UP
-    link/ether c4:bd:e5:f9:b2:28 brd ff:ff:ff:ff:ff:ff
+    link/ether c4:bd:e5:XX:XX:28 brd ff:ff:ff:ff:ff:ff
     inet 192.168.4.1/24 scope global ap0
 ```
 
 ### `sudo WAN_IF=wlp0s20f3 LAN_IF=ap0 ./network/setup-ap.sh` çıktısı
 ```
-[setup-ap] WAN_IF=wlp0s20f3  LAN_IF=ap0  AP_IP=192.168.4.1  PROJECT_PATH=/home/omerfarukmamat/codewithclaude
+[setup-ap] WAN_IF=wlp0s20f3  LAN_IF=ap0  AP_IP=192.168.4.1  PROJECT_PATH=/home/<kullanici>/codewithclaude
 [setup-ap] ap0 üzerine statik IP atanıyor...
 [setup-ap] IPv4 forwarding açılıyor...
 [setup-ap] dnsmasq/hostapd config'leri yer tutuculardan üretiliyor...
@@ -163,33 +167,33 @@ Aug  3 15:39:05 dnsmasq[21419]: query[A] analytics.google.com from 192.168.4.246
 Aug  3 15:39:11 dnsmasq[21419]: query[A] connectivity.samsung.com.cn from 192.168.4.246
 ```
 
-### `GET /api/v1/sitevisits?username=5467925434` — TC'ye bağlanmış gerçek ziyaretler
+### `GET /api/v1/sitevisits?username=5XXXXXXXXX` — TC'ye bağlanmış gerçek ziyaretler
 ```json
 [
   {
     "timestamp": "2026-08-03T12:39:11.535098+00:00",
-    "username": "5467925434",
+    "username": "5XXXXXXXXX",
     "ip": "192.168.4.246",
     "domain": "connectivity.samsung.com.cn",
     "query_type": "A"
   },
   {
     "timestamp": "2026-08-03T12:39:05.516030+00:00",
-    "username": "5467925434",
+    "username": "5XXXXXXXXX",
     "ip": "192.168.4.246",
     "domain": "stats.g.doubleclick.net",
     "query_type": "A"
   },
   {
     "timestamp": "2026-08-03T12:39:05.482068+00:00",
-    "username": "5467925434",
+    "username": "5XXXXXXXXX",
     "ip": "192.168.4.246",
     "domain": "analytics.google.com",
     "query_type": "A"
   },
   {
     "timestamp": "2026-08-03T12:39:05.448453+00:00",
-    "username": "5467925434",
+    "username": "5XXXXXXXXX",
     "ip": "192.168.4.246",
     "domain": "www.google.com.tr",
     "query_type": "A"
@@ -206,7 +210,7 @@ Aug  3 15:39:11 dnsmasq[21419]: query[A] connectivity.samsung.com.cn from 192.16
 [
     {
         "id": 37,
-        "username": "5467925434",
+        "username": "5XXXXXXXXX",
         "ip": "192.168.4.246",
         "mac": "02:00:C0:A8:04:F6",
         "login_time": "2026-08-03T12:38:04.168042+00:00",
@@ -224,7 +228,7 @@ elements = { 192.168.4.246 }
 ```json
 {
     "status": "ok",
-    "message": "5467925434 kullanıcısının oturumu sonlandırıldı."
+    "message": "5XXXXXXXXX kullanıcısının oturumu sonlandırıldı."
 }
 ```
 
