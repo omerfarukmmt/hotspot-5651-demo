@@ -7,7 +7,7 @@
 # backend bridge network'te "backend:8000" olarak). Bu dosya backend'i host network'e
 # tasiyip NET_ADMIN veriyor ki gercek nft komutlari (bkz. backend/nft_manager.py)
 # host'un ap0/wlp0s20f3 arayuzlerini yoneten ruleset'i degistirebilsin
-# (bkz. network/README.md, PROGRESS.md "Henuz yapilmadi" maddesi).
+# (bkz. network/README.md, PROGRESS.md bolum 2).
 services:
   postgres:
     ports:
@@ -22,6 +22,10 @@ services:
     cap_add:
       - NET_ADMIN
     ports: !reset []
+    # Host network'te 0.0.0.0'a bağlanırsa AP istemcileri 192.168.4.1:8000'e
+    # doğrudan gidip nginx'i atlayabilir (sahte X-Real-IP ile rate limit atlatma,
+    # başka IP adına allow-set'e ekleme). Sadece loopback: nginx 127.0.0.1:8000'e ulaşır.
+    command: ["uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000"]
     environment:
       DATABASE_URL: postgresql://hotspot:hotspot_secret@127.0.0.1:5432/hotspot_db
       REDIS_URL: redis://127.0.0.1:6379/0

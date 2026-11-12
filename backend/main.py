@@ -61,7 +61,12 @@ def utcnow() -> datetime:
 
 
 def get_client_ip(request: Request) -> str:
-    """Nginx arkasında X-Real-IP, doğrudan erişimde socket adresi."""
+    """Nginx arkasında X-Real-IP, doğrudan erişimde socket adresi.
+
+    X-Real-IP'ye güvenilebilmesi için backend'e YALNIZCA nginx (ve localhost)
+    ulaşabilmelidir — bu yüzden docker-compose dosyalarında 8000 portu sadece
+    127.0.0.1'e açılır. Aksi halde istemci bu header'ı kendisi gönderip rate
+    limit'i atlatabilir veya başka bir IP adına oturum açtırabilir."""
     return request.headers.get("x-real-ip") or (request.client.host if request.client else "0.0.0.0")
 
 
@@ -203,6 +208,22 @@ def _active_session_for_ip(db: DbSession, ip: str) -> models.SessionRecord | Non
     )
 
 
+def _release_ip_if_unused(db: DbSession, ip: str) -> None:
+    """IP'yi nftables allow-set'ten yalnızca o IP'ye ait BAŞKA aktif oturum yoksa çıkarır.
+
+    Aynı cihaz (aynı IP) cookie'yi kaybedip yeniden giriş yaptığında iki aktif
+    oturum oluşur; eskisinin süresi dolduğunda/kapatıldığında yenisinin internet
+    erişimi de kesilmemelidir. Çağırmadan önce ilgili oturum DB'de kapatılmış
+    (is_active=False, commit/flush edilmiş) olmalıdır."""
+    still_used = (
+        db.query(models.SessionRecord.id)
+        .filter(models.SessionRecord.ip_address == ip, models.SessionRecord.is_active.is_(True))
+        .first()
+    )
+    if still_used is None:
+        nft_manager.revoke_client(ip)
+
+
 def require_admin(x_admin_key: str = Header(default="")) -> None:
     """Site ziyaret loglarını görebilmek için basit paylaşılan-anahtar koruması (KVKK: bu veriler herkese açık olmamalı)."""
     if not secrets.compare_digest(x_admin_key, ADMIN_API_KEY):
@@ -222,6 +243,7 @@ async def _expired_session_reaper():
                 active = db.query(models.SessionRecord).filter(
                     models.SessionRecord.is_active.is_(True)
                 ).all()
+                expired_ips = set()
                 for rec in active:
                     if not rdb.exists(f"session:{rec.session_token}"):
                         rec.is_active = False
@@ -230,8 +252,10 @@ async def _expired_session_reaper():
                             "EXPIRE", rec.ip_address, rec.mac_address, rec.username,
                             "Oturum suresi doldu (2 saatlik TTL), internet erisimi kapatildi.",
                         )
-                        nft_manager.revoke_client(rec.ip_address)
+                        expired_ips.add(rec.ip_address)
                 db.commit()
+                for ip in expired_ips:
+                    _release_ip_if_unused(db, ip)
             finally:
                 db.close()
         except Exception as exc:  # arka plan görevi asla ölmemeli
@@ -303,7 +327,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="5651 Uyumlu Hotspot Demo",
     description="Captive Portal + MERNİS/SMS doğrulama + RFC 5424 imzalı loglama",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -412,7 +436,7 @@ def sms_verify(
     stored = rdb.get(f"otp:{phone}")
     if stored is None:
         raise HTTPException(status_code=400, detail="Kodun süresi dolmuş. Lütfen yeni kod isteyin.")
-    if stored != body.code.strip():
+    if not secrets.compare_digest(stored, body.code.strip()):
         fail_key = f"otp_fail:{phone}"
         fails = rdb.incr(fail_key)
         if fails == 1:
@@ -489,7 +513,7 @@ def logout(request: Request, response: Response, db: DbSession = Depends(get_db)
                 "LOGOUT", session["ip"], session["mac"], session["username"],
                 "Kullanici oturumu sonlandirdi.",
             )
-            nft_manager.revoke_client(session["ip"])
+            _release_ip_if_unused(db, session["ip"])
     response.delete_cookie("session_token", path="/")
     return {"status": "ok", "message": "Oturum sonlandırıldı."}
 
@@ -537,7 +561,7 @@ def kick_session(session_id: int, db: DbSession = Depends(get_db)):
         "KICK", record.ip_address, record.mac_address, record.username,
         "Yonetici tarafindan oturum zorla sonlandirildi.",
     )
-    nft_manager.revoke_client(record.ip_address)
+    _release_ip_if_unused(db, record.ip_address)
 
     return {"status": "ok", "message": f"{record.username} kullanıcısının oturumu sonlandırıldı."}
 
@@ -545,8 +569,11 @@ def kick_session(session_id: int, db: DbSession = Depends(get_db)):
 # ----------------------------------------------------------------------------
 # 5651 loglama — dijital imza ve doğrulama
 # ----------------------------------------------------------------------------
-@app.post("/api/v1/log/sign")
+@app.post("/api/v1/log/sign", dependencies=[Depends(require_admin)])
 def sign_logs():
+    """Aktif logu imzalar. Admin yetkisi ister: herkese açık olsaydı, log dosyasını
+    değiştiren biri hemen ardından bu ucu çağırıp değişikliği "geçerli" imzayla
+    örtebilirdi (kurcalama kanıtı anlamsızlaşırdı)."""
     try:
         meta = log_manager.sign_log_file()
     except FileNotFoundError as exc:
