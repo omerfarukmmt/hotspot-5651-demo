@@ -4,8 +4,11 @@
   <PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID [meta IP=".." MAC=".." USER=".."] MESAJ
 - İmzalama: log dosyasının SHA-256 özeti, RSA-2048 özel anahtarı ile (PKCS#1 v1.5)
   imzalanır ve `dhcp_activity.log.signed` dosyasına yazılır (zaman damgası simülasyonu).
-- Doğrulama: dosyanın güncel özeti yeniden hesaplanır ve imza public key ile kontrol
-  edilir; tek karakterlik değişiklik bile imzayı geçersiz kılar.
+- Doğrulama: dosyanın güncel özeti yeniden hesaplanır ve imza, sunucunun KENDİ
+  public key'i ile kontrol edilir; tek karakterlik değişiklik bile imzayı geçersiz kılar.
+  `.signed` dosyasındaki `public_key_pem` yalnızca bilgi amaçlıdır — doğrulamada ona
+  güvenilmez (aksi halde log'u değiştiren biri kendi anahtarıyla yeniden imzalayıp
+  dosyaya kendi public key'ini koyarak doğrulamayı geçebilirdi).
 """
 import base64
 import hashlib
@@ -60,6 +63,35 @@ def load_or_create_private_key() -> rsa.RSAPrivateKey:
     return key
 
 
+def _trusted_public_key() -> rsa.RSAPublicKey:
+    """Doğrulamada kullanılacak güvenilir public key: sunucunun kendi imza anahtarından türetilir."""
+    return load_or_create_private_key().public_key()
+
+
+def _public_key_pem(public_key) -> str:
+    return public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+
+
+def _key_fingerprint(public_key) -> str:
+    """Public key'in SHA-256 parmak izi (DER) — farklı anahtarla imzalanmış kayıtları ayırt etmek için."""
+    der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return hashlib.sha256(der).hexdigest()
+
+
+def _verify_digest(public_key, signature: bytes, digest_bytes: bytes) -> bool:
+    try:
+        public_key.verify(signature, digest_bytes, padding.PKCS1v15(), utils.Prehashed(hashes.SHA256()))
+        return True
+    except InvalidSignature:
+        return False
+
+
 def _rfc5424_timestamp() -> str:
     return (
         datetime.now(timezone.utc)
@@ -105,10 +137,7 @@ def sign_log_file() -> dict:
         utils.Prehashed(hashes.SHA256()),
     )
 
-    public_pem = key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("ascii")
+    public_pem = _public_key_pem(key.public_key())
 
     with open(LOG_FILE, "r", encoding="utf-8") as f:
         line_count = sum(1 for _ in f)
@@ -122,6 +151,7 @@ def sign_log_file() -> dict:
         "algorithm": "RSA-2048 / PKCS#1 v1.5 / SHA-256",
         "note": "5651 uyumlu zaman damgasi simulasyonu (self-signed). "
                 "Gercek sistemde TUBITAK/BTK onayli zaman damgasi sunucusu kullanilir.",
+        "key_fingerprint_sha256": _key_fingerprint(key.public_key()),
         "public_key_pem": public_pem,
     }
     with open(SIGNED_FILE, "w", encoding="utf-8") as f:
@@ -144,26 +174,27 @@ def verify_log_file() -> dict:
     current_hex = current_digest.hexdigest()
     hash_matches = current_hex == meta.get("sha256")
 
-    public_key = serialization.load_pem_public_key(meta["public_key_pem"].encode("ascii"))
-    signature = base64.b64decode(meta["signature_b64"])
-
-    signature_valid = False
+    trusted_key = _trusted_public_key()
+    # .signed içindeki public key sunucunun anahtarıyla aynı mı? (bilgi amaçlı; doğrulama
+    # her durumda trusted_key ile yapılır)
     try:
-        public_key.verify(
-            signature,
-            current_digest.digest(),
-            padding.PKCS1v15(),
-            utils.Prehashed(hashes.SHA256()),
-        )
-        signature_valid = True
-    except InvalidSignature:
-        signature_valid = False
+        embedded_key = serialization.load_pem_public_key(meta["public_key_pem"].encode("ascii"))
+        key_matches = _key_fingerprint(embedded_key) == _key_fingerprint(trusted_key)
+    except (KeyError, ValueError):
+        key_matches = False
+
+    try:
+        signature = base64.b64decode(meta["signature_b64"])
+    except (KeyError, ValueError):
+        signature = b""
+    signature_valid = _verify_digest(trusted_key, signature, current_digest.digest())
 
     valid = hash_matches and signature_valid
     return {
         "valid": valid,
         "hash_matches": hash_matches,
         "signature_valid": signature_valid,
+        "key_matches_server": key_matches,
         "signed_at": meta.get("signed_at"),
         "expected_sha256": meta.get("sha256"),
         "current_sha256": current_hex,
@@ -231,10 +262,7 @@ def rotate_and_seal_log() -> dict:
             padding.PKCS1v15(),
             utils.Prehashed(hashes.SHA256()),
         )
-        public_pem = key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo,
-        ).decode("ascii")
+        public_pem = _public_key_pem(key.public_key())
 
         with open(LOG_FILE, "r", encoding="utf-8") as f:
             line_count = sum(1 for _ in f)
@@ -279,8 +307,10 @@ def verify_chain() -> dict:
     """Tüm imza zincirini baştan sona doğrular.
 
     Her kayıt için: (1) hash zinciri (link_hash) bir öncekiyle tutarlı mı,
-    (2) RSA imzası kaydın sha256'sını doğruluyor mu, (3) arşivlenen log dosyası
-    hâlâ diskte duruyorsa içeriği kayıttaki sha256 ile eşleşiyor mu kontrol edilir.
+    (2) RSA imzası kaydın sha256'sını sunucunun KENDİ public key'i ile doğruluyor mu
+    (kayıttaki public_key_pem'e güvenilmez), (3) arşivlenen log dosyası diskte mi ve
+    içeriği kayıttaki sha256 ile eşleşiyor mu kontrol edilir. 5651 kapsamında loglar
+    saklanmak zorunda olduğu için arşiv dosyasının KAYBOLMASI da ihlal sayılır.
     """
     if not os.path.exists(CHAIN_FILE):
         return {
@@ -297,6 +327,7 @@ def verify_chain() -> dict:
             if line:
                 entries.append(json.loads(line))
 
+    trusted_key = _trusted_public_key()
     prev_link_hash = GENESIS_HASH
     results = []
     overall_valid = True
@@ -308,24 +339,22 @@ def verify_chain() -> dict:
             and entry.get("prev_link_hash") == prev_link_hash
         )
 
-        signature_valid = False
         try:
-            public_key = serialization.load_pem_public_key(entry["public_key_pem"].encode("ascii"))
-            public_key.verify(
+            signature_valid = _verify_digest(
+                trusted_key,
                 base64.b64decode(entry["signature_b64"]),
                 bytes.fromhex(entry["sha256"]),
-                padding.PKCS1v15(),
-                utils.Prehashed(hashes.SHA256()),
             )
-            signature_valid = True
-        except (InvalidSignature, KeyError, ValueError):
+        except (KeyError, ValueError, TypeError):
             signature_valid = False
 
         archived_path = os.path.join(ARCHIVE_DIR, entry.get("archived_file", ""))
         file_present = os.path.exists(archived_path)
-        file_matches = _sha256_of_file(archived_path).hexdigest() == entry["sha256"] if file_present else None
+        file_matches = (
+            _sha256_of_file(archived_path).hexdigest() == entry.get("sha256") if file_present else False
+        )
 
-        entry_valid = chain_intact and signature_valid and (file_matches is not False)
+        entry_valid = chain_intact and signature_valid and file_present and file_matches
         overall_valid = overall_valid and entry_valid
         results.append({
             "sequence": entry.get("sequence"),

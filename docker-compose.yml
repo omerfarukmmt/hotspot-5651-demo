@@ -56,7 +56,10 @@ services:
     volumes:
       - ./logs:/app/logs
     ports:
-      - "8000:8000"
+      # Yalnızca localhost (Swagger: http://localhost:8000/docs). Backend X-Real-IP
+      # header'ına güvendiği için dış ağdan doğrudan erişilebilir OLMAMALI —
+      # tüm istemci trafiği nginx (:8080) üzerinden gelir.
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy

@@ -15,3 +15,7 @@ cookies.txt
 .vscode/
 .idea/
 Thumbs.db
+
+# Test
+.pytest_cache/
+.venv/
